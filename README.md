@@ -5,7 +5,7 @@ A Claude Code plugin that turns ad-hoc coding sessions into a disciplined, multi
 ## Install
 
 ```
-/plugin marketplace add flykit-cc/flykit
+/plugin marketplace add flykit-cc/plugins
 /plugin install flow@flykit
 ```
 

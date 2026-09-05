@@ -12,8 +12,8 @@ set -uo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="$SOURCE_DIR/../.claude-plugin/plugin.json"
-REPO="flykit-cc/flykit"
-MARKETPLACE_URL="${FLOW_MARKETPLACE_URL:-https://raw.githubusercontent.com/flykit-cc/flykit/main/.claude-plugin/marketplace.json}"
+REPO="flykit-cc/flow"
+MARKETPLACE_URL="${FLOW_MARKETPLACE_URL:-https://raw.githubusercontent.com/flykit-cc/plugins/main/.claude-plugin/marketplace.json}"
 
 cmd="${1:-}"
 

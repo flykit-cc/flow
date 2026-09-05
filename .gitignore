@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.DS_Store
+*.log
+data/
+.claude/
+CLAUDE.md
+.flow/
+.serena/
+.playwright-mcp/
+docs/superpowers/

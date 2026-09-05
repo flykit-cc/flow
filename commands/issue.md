@@ -1,12 +1,12 @@
 ---
-description: Report a flow bug or feature request as a GitHub issue on flykit-cc/flykit, from any project. Checks first whether you are on an old version.
+description: Report a flow bug or feature request as a GitHub issue on flykit-cc/flow, from any project. Checks first whether you are on an old version.
 allowed-tools: Bash, AskUserQuestion
 ---
 # /flow:issue
 
 File a report about **flow itself** from inside whatever project you are working in. `/flow:issue continue` scopes it to a command; with no argument, infer the command from the conversation.
 
-This reports on flow, not on the current project — the target repo is always `flykit-cc/flykit`, never the user's git remote.
+This reports on flow, not on the current project — the target repo is always `flykit-cc/flow`, never the user's git remote.
 
 ## Step 1: Version check — before anything else
 
@@ -63,7 +63,7 @@ Never run `gh issue create` without that confirmation. Posting is public and irr
 ## Step 5: File
 
 ```bash
-gh issue create --repo flykit-cc/flykit \
+gh issue create --repo flykit-cc/flow \
   --title "<title>" \
   --label "flow,<bug|enhancement>" \
   --body "<body>"
