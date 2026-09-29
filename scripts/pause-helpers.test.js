@@ -67,17 +67,30 @@ test('finish aborts when a private path is already staged', () => {
     });
 });
 
-test('finish clears the shutdown_request marker so the next session does not inherit it', () => {
+test('finish --land reports a rejected default-branch push and keeps the branch', () => {
     const root = makeRepo();
-    const sessionDir = path.join(root, '.flow', 'session');
-    fs.mkdirSync(sessionDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionDir, 'shutdown_request'), '1\n');
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-remote-'));
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+    git(root, ['remote', 'add', 'origin', remote]);
+    git(root, ['push', '-q', '-u', 'origin', 'main']);
+    git(root, ['remote', 'set-head', 'origin', 'main']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    // The remote accepts the feature branch but rejects any update to main.
+    const hook = path.join(remote, 'hooks', 'pre-receive');
+    fs.writeFileSync(hook, '#!/bin/sh\nwhile read o n ref; do [ "$ref" = refs/heads/main ] && { echo "main is protected" >&2; exit 1; }; done\nexit 0\n');
+    fs.chmodSync(hook, 0o755);
     fs.writeFileSync(path.join(root, 'src.ts'), 'export const a = 1;\n');
+    fs.writeFileSync(path.join(root, '.t'), 'Test session\n');
+    fs.writeFileSync(path.join(root, '.b'), 'body\n');
 
-    runFinish(root);
+    const out = execFileSync('bash', [HELPERS, 'finish', '.t', '.b', 'chore: test', '--land'], {
+        encoding: 'utf8', cwd: root, env: { ...process.env, CLAUDE_PROJECT_DIR: root }, stdio: 'pipe',
+    });
 
-    assert.ok(!fs.existsSync(path.join(sessionDir, 'shutdown_request')),
-        'a stale shutdown_request makes next session\'s agents exit before doing any work');
+    assert.match(out, /^finish-ok$/m, 'a failed land must still reach the report');
+    assert.match(out, /^land:LAND FAILED \(push main\): /m);
+    assert.match(git(root, ['branch', '--list', 'feature']), /feature/, 'the branch is the only pushed copy of the work');
+    assert.ok(fs.existsSync(path.join(root, '.flow', 'state', 'last-pause')), 'write-marker still runs');
 });
 
 test('finish consumes the narration files so a later pause cannot log stale text', () => {
@@ -247,4 +260,132 @@ test('run-verification reports failure and exits non-zero when build_cmd fails',
         assert.match(String(err.stdout), /verification-failed:build/);
         return true;
     });
+});
+
+function helper(root, args, env = {}) {
+    return execFileSync('bash', [HELPERS, ...args], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, CLAUDE_PROJECT_DIR: root, ...env },
+        stdio: 'pipe',
+    }).trim();
+}
+
+test('a finished goal with a Needs you section keeps session-progress.md', () => {
+    const root = makeRepo();
+    const progress = path.join(root, '.flow', 'session-progress.md');
+    fs.writeFileSync(progress, '## Goal\n\n## Needs you\n- skipped: CLAUDE.md update (unattended)\n');
+
+    assert.match(helper(root, ['trim-or-delete-progress']), /kept .*needs-you=y/);
+    assert.ok(fs.existsSync(progress), 'the next session only learns what was skipped from this file');
+});
+
+test('a finished goal with an empty Needs you section is still deleted', () => {
+    const root = makeRepo();
+    const progress = path.join(root, '.flow', 'session-progress.md');
+    fs.writeFileSync(progress, '## Goal\n\n## Needs you\n\n');
+
+    assert.match(helper(root, ['trim-or-delete-progress']), /deleted/);
+    assert.ok(!fs.existsSync(progress));
+});
+
+test('pause-pending set/read, and a successful finish clears it', () => {
+    const root = makeRepo();
+    assert.match(helper(root, ['pause-pending', 'set', 'after', 'sleep']), /set: after sleep/);
+    assert.match(helper(root, ['pause-pending', 'read']), /^flags: after sleep\nstarted: \d{4}-/);
+
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+    runFinish(root);
+    assert.strictEqual(helper(root, ['pause-pending', 'read']), '');
+});
+
+test('schedule-sleep does nothing off macOS', () => {
+    const root = makeRepo();
+    const marker = path.join(root, 'slept');
+    const out = helper(root, ['schedule-sleep', '0'], { FLOW_UNAME: 'Linux', FLOW_SLEEP_CMD: `touch ${marker}` });
+    assert.strictEqual(out, 'sleep-skipped:not-macos');
+    assert.ok(!fs.existsSync(marker));
+});
+
+test('schedule-sleep on macOS fires after the delay, detached from the helper', async () => {
+    const root = makeRepo();
+    const marker = path.join(root, 'slept');
+    const out = helper(root, ['schedule-sleep', '1'], { FLOW_UNAME: 'Darwin', FLOW_SLEEP_CMD: `touch ${marker}` });
+    assert.match(out, /^sleep-scheduled:1s pid=\d+ \(cancel: kill \d+\)$/);
+    assert.ok(!fs.existsSync(marker), 'must wait out the delay, not sleep immediately');
+
+    const deadline = Date.now() + 6000;
+    while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+    assert.ok(fs.existsSync(marker), 'the scheduled sleep must still fire after the helper has exited');
+});
+
+test('finish never commits .flow/salvaged, even when config sets its own private_globs', () => {
+    const root = makeRepo();
+    fs.writeFileSync(path.join(root, '.flow', 'config.md'), '- private_globs: .claude\n');
+    fs.mkdirSync(path.join(root, '.flow', 'salvaged'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.flow', 'salvaged', 'impl.md'), 'raw transcript\n');
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+
+    runFinish(root);
+    const committed = git(root, ['show', '--name-only', '--format=', 'HEAD']);
+    assert.ok(committed.includes('src.ts'));
+    assert.ok(!committed.includes('.flow/salvaged'), 'salvaged agent output must never be committed');
+});
+
+test('a finish that dies at commit keeps pause-pending — that pause did not happen', () => {
+    const root = makeRepo();
+    const hook = path.join(root, '.git', 'hooks', 'pre-commit');
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    helper(root, ['pause-pending', 'set', 'after']);
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+
+    assert.throws(() => runFinish(root));
+    assert.match(helper(root, ['pause-pending', 'read']), /^flags: after/);
+});
+
+test('schedule-sleep rejects a non-numeric delay', () => {
+    const root = makeRepo();
+    assert.throws(() => helper(root, ['schedule-sleep', '30s'], { FLOW_UNAME: 'Darwin', FLOW_SLEEP_CMD: 'true' }));
+});
+
+test('changed-files leaves out private paths, so salvaged work cannot block the no-op exit', () => {
+    const root = makeRepo();
+    fs.mkdirSync(path.join(root, '.flow', 'salvaged'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.flow', 'salvaged', 'impl.md'), 'x\n');
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+    const out = helper(root, ['changed-files']).split('\n');
+    assert.ok(out.includes('src.ts'));
+    assert.ok(!out.some((f) => f.startsWith('.flow/salvaged')));
+});
+
+test('finish stops tracking .flow files committed before the config.md-only rule, keeping them on disk', () => {
+    const root = makeRepo();
+    const log = path.join(root, '.flow', 'session-log.md');
+    fs.writeFileSync(log, 'old history\n');
+    git(root, ['add', '-f', '.flow/session-log.md', '.flow/config.md']);
+    git(root, ['commit', '-qm', 'legacy: committed flow state']);
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+
+    runFinish(root);
+    const tracked = git(root, ['ls-files', '.flow']).trim().split('\n');
+    assert.deepStrictEqual(tracked, ['.flow/config.md'], 'only config.md stays tracked');
+    assert.ok(fs.existsSync(log), 'the file itself must survive on disk');
+});
+
+test('after a pause, flow state never shows as untracked — only config.md is visible to git', () => {
+    const root = makeRepo();
+    fs.writeFileSync(path.join(root, '.flow', 'questions.md'), '# q\n');
+    fs.writeFileSync(path.join(root, 'src.ts'), 'x\n');
+    runFinish(root);
+    assert.strictEqual(git(root, ['status', '--porcelain']).trim(), '', 'a clean pause leaves a clean tree');
+});
+
+test('finish commits .env.example but refuses a real .env', () => {
+    const root = makeRepo();
+    fs.writeFileSync(path.join(root, '.env.example'), 'API_KEY=\n');
+    runFinish(root);
+    assert.ok(git(root, ['show', '--name-only', '--format=', 'HEAD']).includes('.env.example'));
+
+    fs.writeFileSync(path.join(root, '.env'), 'API_KEY=sk-live\n');
+    assert.throws(() => runFinish(root), (err) => err.status === 2 && /secret_globs/.test(String(err.stderr)));
 });

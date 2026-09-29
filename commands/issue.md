@@ -65,10 +65,12 @@ Never run `gh issue create` without that confirmation. Posting is public and irr
 ```bash
 gh issue create --repo flykit-cc/flow \
   --title "<title>" \
-  --label "flow,<bug|enhancement>" \
-  --body "<body>"
+  --label "<bug|enhancement>" \
+  --body-file - <<'EOF'
+<body>
+EOF
 ```
 
-`--label` takes a comma-separated list — that is the form `gh`'s own help documents.
+The quoted `'EOF'` keeps backticks and `$` in the body literal.
 
 Print the issue URL. If `dupe-search` returned `no-gh`, skip this step and print the body for manual pasting instead.

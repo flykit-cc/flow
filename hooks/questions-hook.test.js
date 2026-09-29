@@ -51,6 +51,16 @@ test('prompt: one-liner when file exists, no systemMessage JSON', () => {
     assert.ok(!r.out.includes('systemMessage'));
 });
 
+test('prompt: silent when nothing is actionable', () => {
+    const r = runIn(projectWith('## Q1\nstatus: answered\nasks: which cache?\nanswer: redis\napplied: -\n'), 'prompt');
+    assert.equal(r.out.trim(), '');
+});
+
+test('prompt: an answered-but-not-applied question is actionable', () => {
+    const r = runIn(projectWith('## Q1\nstatus: answered\nasks: which cache?\nanswer: redis\n'), 'prompt');
+    assert.match(r.out, /1 answered-not-applied/);
+});
+
 test('prompt: passes through the loud UNPARSEABLE line', () => {
     const r = runIn(projectWith('garbage line\n'), 'prompt');
     assert.match(r.out, /UNPARSEABLE — queue unreliable/);

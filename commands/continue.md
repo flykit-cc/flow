@@ -15,13 +15,17 @@ HELPERS_PAUSE="${CLAUDE_PLUGIN_ROOT}/scripts/pause-helpers.sh"
 "$HELPERS" progress-age-days  # 0 if missing
 "$HELPERS" dev-server-state   # running:<pid> | port-taken:<cwd> | free | no-port
 "$HELPERS" deps-ok            # ok | missing
+"$HELPERS" needs-you          # what an unattended pause left for the user (empty if none)
+"$HELPERS_PAUSE" pause-pending read   # non-empty: a /flow:pause after never completed
 ```
+
+**These two come first in the recap, whatever the branch below.** `needs-you` is what an unattended pause (`after` / `sleep` / autopilot) could not ask about while the user was away — stuck agents with their work in `.flow/salvaged/`, a refused land, a failed push. Show it verbatim. Never edit it: the next `/flow:pause` drops what this session resolved. A non-empty `pause-pending` means that pause never happened: say so, with its flags and start time, and offer to run it now; once the user has answered, `"$HELPERS_PAUSE" pause-pending clear`.
 
 Also read `$CLAUDE_PROJECT_DIR/.flow/config.md` and `$CLAUDE_PROJECT_DIR/CLAUDE.md`.
 
 ## Step 2: Branch on progress state
 
-- **`missing`:** no saved session — this is a cold start. Ask the user what to work on (freeform; if `pm_backend` is configured and they'd rather pick from open issues, list them first via `gh issue list` / Linear MCP / `issues/` frontmatter, per `pm_backend`). If `workflow_mode: team` and you're still on the default branch, cut a feature branch now — `git checkout -b "$(echo "<goal-or-issue-title>" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-')"` — so `/flow:pause land` has something to push and PR later; skip if already on a non-default branch. Once you have a goal, write `$CLAUDE_PROJECT_DIR/session-progress.md`:
+- **`missing`:** no saved session — this is a cold start. Ask the user what to work on (freeform; if `pm_backend` is configured and they'd rather pick from open issues, list them first via `gh issue list` / Linear MCP / `issues/` frontmatter, per `pm_backend`). If `workflow_mode: team` and you're still on the default branch, cut a feature branch now — `git checkout -b "$(echo "<goal-or-issue-title>" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-')"` — so `/flow:pause land` has something to push and PR later; skip if already on a non-default branch. Once you have a goal, write `$CLAUDE_PROJECT_DIR/.flow/session-progress.md` (keeping any `## Needs you` section already in it):
 
   ```markdown
   # Session: <date>
@@ -38,11 +42,9 @@ Also read `$CLAUDE_PROJECT_DIR/.flow/config.md` and `$CLAUDE_PROJECT_DIR/CLAUDE.
 
   Then continue straight into the work — do not stop to ask about mode or issue triage; those are decided inline as the session unfolds, not up front.
 - **`exists:stale-blocks=<n>`:** the file has more than one Goal or more than one `Paused at` — a past pause appended instead of rewriting, so the newest state is buried and the status-line parsers are reading the oldest Goal. Read the **whole** file, identify the most recent block (usually last), and **rewrite the file with `Write`** down to current state only: one Goal, the still-open tasks, one `Paused at`, one `Next steps`, the latest `Verification:` line. Move nothing to `.flow/session-log.md` — the historical blocks were already logged there at their own pause; if the log is genuinely missing them, say so rather than reconstructing it. Say in the recap that you trimmed it and from how many blocks. Then continue as `exists` below.
-- **`exists`:** read `.flow/session-progress.md` — note Goal, open Tasks, Paused at, Next steps, and the `Verification:` line if present. If it is anything other than a clean `passed (build+test)` — `not run`, `skipped (…)`, `passed (build only…)`, or `failed (test_cmd)` — surface that one line in the recap and offer to run `"$HELPERS_PAUSE" run-verification` now (from `${CLAUDE_PLUGIN_ROOT}/scripts/pause-helpers.sh`). If `progress-age-days > 7`, also run `"$HELPERS" last-log-titles` and surface the last 3 session titles (headlines only; don't read the log body).
+- **`exists`:** in team mode, if you are on the default branch (a team `land` leaves you there), cut a feature branch first, as in `missing` — never work on the default branch in team mode. Then read `.flow/session-progress.md`. If it has no Goal, no open tasks and no `Paused at` — only `## Needs you` — it is not a session to resume: after showing Needs you, continue as `missing`. Otherwise note Goal, open Tasks, Paused at, Next steps, and the `Verification:` line if present. If it is anything other than a clean `passed (build+test)` or `passed (…, ran earlier this session, unchanged since)` — `not run`, `skipped (…)`, `passed (build only…)`, or `failed (test_cmd)` — surface that one line in the recap and offer to run `"$HELPERS_PAUSE" run-verification` now (from `${CLAUDE_PLUGIN_ROOT}/scripts/pause-helpers.sh`). If `progress-age-days > 7`, also run `"$HELPERS" last-log-titles` and surface the last 3 session titles (headlines only; don't read the log body).
 
 ## Step 3: Restore agent handoff files
-
-Check `$CLAUDE_PROJECT_DIR/.flow/session/` for `investigation.md`, `plan.md`, `review*.md`. If any are missing but the phase implies they existed, ask whether to regenerate or proceed without them.
 
 **Never trust a handoff without sweeping first** — a `plan.md` from a previous session reads exactly like the current one, and an agent will implement against it:
 
@@ -52,7 +54,9 @@ Check `$CLAUDE_PROJECT_DIR/.flow/session/` for `investigation.md`, `plan.md`, `r
 
 This is not advisory and there is nothing to decide. It moves every handoff older than `.flow/state/last-pause` into `.flow/session/spent/` and prints the names. Whatever is left in `.flow/session/` afterwards is this session's — use those, regenerate any phase you still need, and name the swept files in the recap.
 
-Never `rm` a handoff yourself and never judge one by eye. If the first line is **`no-pause-marker`**, the project has never completed a pause, so nothing could be dated and *everything* was swept — that is deliberate. Do not go fishing in `spent/` to second-guess it; regenerate instead. Sweeping moves rather than deletes precisely so that failing closed is cheap: recovering a file is one `mv`, while a stale plan implemented in full is not.
+Never `rm` a handoff yourself and never judge one by eye. A first line of **`no-pause-marker`** means nothing could be dated, so *everything* was swept — deliberately (the helper's comment says why); regenerate rather than fishing in `spent/`.
+
+Then check what is left in `.flow/session/` for `investigation.md`, `plan.md`, `review*.md`. If any are missing but the phase implies they existed, ask whether to regenerate or proceed without them.
 
 ## Step 4: Dependencies
 
@@ -69,9 +73,9 @@ Based on `dev-server-state` (uses `dev_port` from config):
 
 ## Step 6: Summarise + pick where to start
 
-Print a tight recap (Goal, open tasks, Paused at, Next, dev URL, and last sessions if age > 7 days).
+Print a tight recap (Needs you and any pending pause first, then Goal, open tasks, Paused at, Next, dev URL, and last sessions if age > 7 days).
 
-Include the questions state: run `${CLAUDE_PLUGIN_ROOT}/scripts/questions-helpers.sh state-line "$CLAUDE_PROJECT_DIR/.flow/questions.md"` and print its output in the recap (skip silently if empty; if UNPARSEABLE, print it loudly and offer to fix the file before anything else). Retire any question whose `issue:` is now closed (`gh issue view <n> --json state` when pm_backend is github) with `retired-because: issue closed`. Rebuild the pointer task from the file (see `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md` → Chores).
+Include the questions state: run `${CLAUDE_PLUGIN_ROOT}/scripts/questions-helpers.sh state-line "$CLAUDE_PROJECT_DIR/.flow/questions.md"` and print its output in the recap (skip silently if empty; if UNPARSEABLE, print it loudly and offer to fix the file before anything else). Retire any question whose `issue:` is now closed (`gh issue view <n> --json state` when pm_backend is github) with `retired-because: issue closed`.
 
 If open questions exist, END the recap turn with the top question's briefing (from `${CLAUDE_PLUGIN_ROOT}/scripts/questions-helpers.sh top-open`, following `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md` → Presenting a question) closing with its handoff line — the dialog comes only in the next turn, after the user replies. NEVER put a dialog in the recap turn itself.
 

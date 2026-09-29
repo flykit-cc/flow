@@ -85,9 +85,11 @@ progress_state() {
     ' "$PROGRESS" 2>/dev/null || true)"
     [ -n "$goal" ] && echo "goal=$goal"
 
-    # Single-line facts the pause command writes verbatim.
+    # Paused at: first non-empty line under a `## Paused at` heading (parsed as
+    # pause-helpers does), else a single `Paused at: …` line.
     local paused verification
-    paused="$(grep -m1 -E '^Paused at:' "$PROGRESS" 2>/dev/null | sed -E 's/^Paused at:[[:space:]]*//' || true)"
+    paused="$(awk '/^#+ *Paused/{flag=1; next} /^#+ /{flag=0} flag && NF{print; exit}' "$PROGRESS" 2>/dev/null || true)"
+    [ -n "$paused" ] || paused="$(grep -m1 -E '^Paused at:' "$PROGRESS" 2>/dev/null | sed -E 's/^Paused at:[[:space:]]*//' || true)"
     [ -n "$paused" ] && echo "paused_at=$paused"
 
     verification="$(grep -m1 -E '^Verification:' "$PROGRESS" 2>/dev/null | sed -E 's/^Verification:[[:space:]]*//' || true)"
@@ -141,8 +143,9 @@ pr_state() {
                 if (.statusCheckRollup // []) | length == 0 then "none"
                 else
                     ((.statusCheckRollup // []) | map(.conclusion // .state // "PENDING")) as $c
-                    | if   ($c | map(select(. == "FAILURE" or . == "ERROR")) | length) > 0 then "failing"
-                      elif ($c | map(select(. == "SUCCESS")) | length) == ($c | length)    then "passing"
+                    | if   ($c | map(select(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT"
+                                             or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE")) | length) > 0 then "failing"
+                      elif ($c | map(select(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL")) | length) == ($c | length) then "passing"
                       else "pending" end
                 end
             )"
@@ -161,6 +164,7 @@ cmd="${1:-}"
 case "$cmd" in
   git-state) git_state ;;
   progress)  progress_state ;;
+  pr-state)  pr_state ;;
 
   all)
     echo "[git]";      git_state

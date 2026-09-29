@@ -172,15 +172,6 @@ test('a handoff newer than the last pause is left in place', () => {
     assert.deepStrictEqual(archived(root), []);
 });
 
-test('shutdown_request is a control marker and is never swept', () => {
-    const root = makeRepo();
-    handoff(root, 'shutdown_request', { stale: true });
-    markPause(root);
-
-    assert.strictEqual(staleHandoffs(root), '');
-    assert.deepStrictEqual(remaining(root), ['shutdown_request']);
-});
-
 test('with no pause marker every handoff is swept — undatable means untrusted', () => {
     // A repo that never completed a pause has no boundary to date handoffs
     // against. Guessing from timestamp gaps works when they are days apart and
@@ -209,12 +200,16 @@ test('a swept handoff is recoverable, never deleted', () => {
     assert.strictEqual(fs.readFileSync(moved, 'utf8'), body, 'content must survive the sweep');
 });
 
-test('no marker and only a shutdown_request sweeps nothing and says nothing', () => {
+test('each sweep clears the previous generation in spent/', () => {
     const root = makeRepo();
-    handoff(root, 'shutdown_request', { stale: true });
+    handoff(root, 'plan.md', { stale: true });
+    markPause(root);
+    staleHandoffs(root);
+    handoff(root, 'review.md', { stale: true });
 
-    assert.strictEqual(staleHandoffs(root), '');
-    assert.deepStrictEqual(archived(root), []);
+    staleHandoffs(root);
+
+    assert.deepStrictEqual(archived(root), ['review.md'], 'spent/ must keep one generation, not grow forever');
 });
 
 test('an empty session dir reports nothing and creates no archive', () => {
@@ -228,4 +223,45 @@ test('an empty session dir reports nothing and creates no archive', () => {
 test('bold Paused at survives the markdown the pause step actually writes', () => {
     const body = '## Goal\nOne goal.\n\n**Paused at:** 2026-07-01\n\n**Paused at:** 2026-08-12\n';
     assert.strictEqual(checkProgress(makeRepo(body)), 'exists:stale-blocks=1');
+});
+
+function needsYou(root) {
+    return execFileSync('bash', [HELPERS, 'needs-you'], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+        stdio: 'pipe',
+    }).trim();
+}
+
+test('needs-you prints only the Needs you section — what an unattended pause left for the user', () => {
+    const body = '## Goal\nShip it.\n\n## Needs you\n- agent `impl` stuck; work in .flow/salvaged/impl.md\n'
+        + '- skipped: CLAUDE.md update\n\n## Next steps\n1. review\n';
+    assert.strictEqual(needsYou(makeRepo(body)),
+        '- agent `impl` stuck; work in .flow/salvaged/impl.md\n- skipped: CLAUDE.md update');
+});
+
+test('needs-you matches the heading in any case and ignores prose that is not an entry', () => {
+    const body = '## Goal\n\n## Needs You\n- land aborted: test_cmd failed\nVerification: failed (test_cmd)\n';
+    assert.strictEqual(needsYou(makeRepo(body)), '- land aborted: test_cmd failed');
+});
+
+test('needs-you is empty with no section or no file', () => {
+    assert.strictEqual(needsYou(makeRepo('## Goal\nx\n')), '');
+    assert.strictEqual(needsYou(makeRepo()), '');
+});
+
+test('salvaged agent work is outside the handoff sweep', () => {
+    const root = makeRepo();
+    markPause(root);
+    handoff(root, 'plan.md', { stale: true });
+    const dir = path.join(root, '.flow', 'salvaged');
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, 'impl.md');
+    fs.writeFileSync(p, 'hours of work\n');
+    const old = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    fs.utimesSync(p, old, old);
+
+    assert.strictEqual(staleHandoffs(root), 'plan.md', 'the sweep must actually have run');
+    assert.ok(fs.existsSync(p), 'a stuck agent\'s saved work must still be where the task says it is');
 });

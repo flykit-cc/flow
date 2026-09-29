@@ -13,9 +13,9 @@ outside them.
 
 Read by the `flow` plugin's commands and agents to learn how to run things in this stack.
 
-This file is **shareable project truth** — commit it if you want collaborators and your
-other machines to get the same setup. Machine-specific values belong in `.flow/local.md`,
-which `private_globs` keeps out of git.
+This file is **shareable project truth** and the only file under `.flow/` that is ever
+committed; everything else there (including `.flow/local.md`, for machine-specific
+values) is private.
 
 Values go after the colon on each line. `>` blockquotes and `<!-- -->` comments are ignored.
 
@@ -71,10 +71,7 @@ Examples (replace with your own — these are illustrative, not defaults):
 - e.g. lint_cmd: `<your-linter>`
 - e.g. test_cmd: `<your-test-runner>`
 <!-- template-only:end -->
-> `/flow:init` fills these in: from your manifest where it declares them, otherwise by
-> working the command out from the repo and running it once to check. A blank value means
-> "skip that step" — there is genuinely nothing to run for it. Re-run `/flow:init` if a blank
-> should have a command; filling them in is its job, not yours.
+> Filled in by `/flow:init` (see the plugin's `references/stack-command-inference.md`).
 
 ---
 
@@ -103,7 +100,7 @@ See the plugin's `references/known-pitfalls.md` for how to grow this list over t
 
 > Optional. Absolute (or `~`-prefixed) path to this project's cross-session memory
 > directory. When set, `/flow:pause` auto-writes ≤4 memory candidates per pause and
-> keeps a `MEMORY.md` index there; `/flow:autopilot` records audit history there.
+> keeps a `MEMORY.md` index there.
 > Leave blank to disable all memory features.
 > Tip: Claude Code derives a per-project slug from the repo's absolute path, e.g.
 > `~/.claude/projects/-Users-you-Documents-GitHub-yourrepo/memory`.
@@ -120,18 +117,7 @@ See the plugin's `references/known-pitfalls.md` for how to grow this list over t
 > Defaults to a conservative set covering env files, private keys, and common
 > credential blobs.
 
-- secret_globs: .env .env.* *.env *.env.* *.pem *.key id_rsa *_rsa *.p12 *.pfx *.keystore credentials.json token.json *secret* *.gpg
-
----
-
-## Orphan-process reaping
-
-> Optional. When `true`, the `post-bash-reap` PostToolUse hook kills the direct
-> subprocess descendants of each Bash tool call (cleans up stray dev servers,
-> scanners, docker exec, etc.). OFF by default — enable only if you do NOT rely on
-> backgrounding a long-running process from inside a single tool call.
-
-- reap_orphans: false
+- secret_globs: .env .env.* *.env *.pem *.key id_rsa *_rsa *.p12 *.pfx *.keystore credentials.json token.json secrets.json secrets.yml secrets.yaml secrets.toml client_secret*.json *.gpg
 
 ---
 
@@ -140,22 +126,10 @@ See the plugin's `references/known-pitfalls.md` for how to grow this list over t
 > Optional. Space-separated globs naming paths that are private to your machine and
 > must never be staged or pushed, even though they live in the repo. Distinct from
 > `secret_globs` (credentials): these are work-in-progress artifacts — your own notes,
-> plans, and local Claude configuration.
-> Defaults to `.claude docs/superpowers .flow`.
+> plans, and local Claude configuration. Everything under `.flow/` except `config.md`
+> is always private, whatever this says.
 
-- private_globs: .claude docs/superpowers .flow/local.md
-
----
-
-## Model tiers
-
-> Optional. Which model each class of work runs on. Agents read these instead of
-> pinning a model, so a weak model never lands on correctness-critical code.
-> `critical` covers security, auth, money paths, migrations, and fail-closed logic.
-
-- model_default:  sonnet
-- model_critical: opus
-- model_cheap:    haiku
+- private_globs: .claude docs/superpowers
 
 ---
 

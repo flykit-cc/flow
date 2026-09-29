@@ -20,9 +20,9 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/uninstall.js" --target "$CLAUDE_PROJECT_DIR"
 
 Print the plan as-is and let the user read it before doing anything.
 
-## Step 2: Ask about the two files that cannot be regenerated
+## Step 2: Ask about what cannot be regenerated
 
-Everything else here is rebuilt by `/flow:init`. These two are not, so ask with
+Everything else here is rebuilt by `/flow:init`. These are not, so ask with
 `AskUserQuestion` rather than deciding for the user — batch both into one call.
 
 Only ask about a file that the Step 1 plan actually listed. Skip the question entirely when
@@ -37,7 +37,8 @@ the file doesn't exist.
 
 2. **`.flow/session-log.md`** — append-only history of every past session.
    - *Keep it (recommended)* — the default; it is the one file here with no way back
-   - *Delete it too* — passes `--purge`, which removes `session-log.md` **and** `questions.md`
+   - *Delete it too* — passes `--purge`, which removes `session-log.md`, `questions.md`
+     **and** `salvaged/`
 
 ## Step 3: Apply
 
@@ -54,10 +55,11 @@ Pass only the flags the answers call for.
 |---|---|
 | `.flow/config.md`, `.flow/local.md` | removed — `/flow:init` rebuilds both |
 | `.flow/session-progress.md` | removed unless `--keep-progress`; **always ask first** |
-| `.flow/state/`, `.flow/.allow-*` | removed — arming markers are one-shot grants and must not survive |
+| `.flow/state/`, `.flow/session/` | removed — session state and agent handoffs |
 | `.flow/session-log.md` | **kept** unless `--purge`; append-only history, the one file here that cannot be regenerated |
 | `.flow/questions.md` | **kept** unless `--purge`; answered decisions and their rationale, equally unregenerable |
-| `CLAUDE.md` | only the `<!-- flow:begin -->…<!-- flow:end -->` block is stripped; the rest is yours. The file is deleted only if flow created it and it holds nothing else |
+| `.flow/salvaged/` | **kept** unless `--purge`; it may be the only copy of a stuck agent's work |
+| `CLAUDE.md` | never touched — even one flow seeded may hold your edits |
 | `issues/` | removed only when empty — issue files are never deleted |
 
 It never touches `.claude/settings.json`. Flow does not manage that file, so if a hook there

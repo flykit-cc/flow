@@ -66,21 +66,12 @@ pm_linear_team: <TEAM_KEY>
 
 (Linear support requires the Linear MCP to be configured separately.)
 
-## 3. Keep `.flow/config.md` out of version control
+## 3. What gets committed
 
-flow treats `.claude/` as **private by default** — see `private_globs` in your config. It
-is your personal setup, not project truth, and `/flow:pause` will refuse to stage anything
-matching `private_globs` so it cannot reach a remote by accident.
-
-If you want the file to travel between your own machines, sync it outside git.
-
-If you deliberately want to share stack settings with collaborators, narrow the default:
-
-```
-private_globs: .claude/settings.local.json docs/superpowers .flow
-```
-
-Then commit `.flow/config.md` yourself. flow will no longer block it.
+Commit `.flow/config.md` — it is shareable project truth, and the only file under `.flow/`
+that flow ever commits. Everything else under `.flow/` (`local.md` for machine-specific
+values, session files, state, salvaged work) is private: `/flow:pause` never stages it.
+`private_globs` in your config adds more private paths (default `.claude docs/superpowers`).
 
 ## 4. (Optional) Enable strict file protection
 
@@ -163,7 +154,3 @@ It reports:
 ### `gh` / Linear errors during issue filing or closing
 - `gh`: run `gh auth login` once. Confirm with `gh auth status`.
 - Linear: ensure the Linear MCP is configured at the user or project level.
-
-### `npm install` runs every time I invoke a script
-- That means `node_modules` is being deleted between runs. Check that `${CLAUDE_PLUGIN_ROOT}` is stable across sessions and not on a tmpfs.
-- `flow` itself has no runtime dependencies, so this is unlikely unless you fork and add deps.

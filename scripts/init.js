@@ -11,7 +11,7 @@
  *
  * Creates (idempotent — never overwrites):
  *   <target>/.flow/config.md     from references/config-template.md
- *   <target>/CLAUDE.md           from references/claude-md-template.md, ONLY when
+ *   <target>/CLAUDE.md           from references/claude-md-template.md, only when
  *                                absent — an existing one is left strictly alone
  *   <target>/issues/             only when pm_backend is `local`, which is the
  *                                only backend that reads it
@@ -22,15 +22,15 @@
  * (pm_github_owner/pm_github_repo/pm_linear_team) — never a `{PLACEHOLDER}`.
  *
  * Each step prints "created" or "already exists, skipping". The run ends by naming
- * every `*_cmd` still blank — a to-do for the agent driving init, which infers those
- * from the repo and verifies them, never a to-do handed back to the user.
+ * every `*_cmd` still blank — the agent's to-do (references/stack-command-inference.md).
  */
 
 'use strict';
 
-const { pluginRoot } = require('./lib/bootstrap');
 const fs = require('fs');
 const path = require('path');
+
+const pluginRoot = path.resolve(__dirname, '..');
 
 const VALID_WORKFLOW_MODES = ['solo', 'team'];
 const VALID_PM_BACKENDS = ['github', 'linear', 'local'];
@@ -98,34 +98,6 @@ function copyIfMissing(src, dest) {
 }
 
 /**
- * Add a marked section to `dest`, creating the file if absent.
- *
- * Idempotent: a file that already contains the marker is left untouched, so
- * `init` can be re-run safely. Never rewrites content outside the markers —
- * the user's own notes are theirs.
- *
- * @returns {{created: boolean, path: string, status: 'created'|'appended'|'present'}}
- */
-function appendSection(dest, marker, body) {
-    const begin = `<!-- ${marker}:begin -->`;
-    const end = `<!-- ${marker}:end -->`;
-    const block = `${begin}\n${body.trim()}\n${end}\n`;
-
-    if (!fs.existsSync(dest)) {
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.writeFileSync(dest, block);
-        return { created: true, path: dest, status: 'created' };
-    }
-
-    const current = fs.readFileSync(dest, 'utf8');
-    if (current.includes(begin)) return { created: false, path: dest, status: 'present' };
-
-    const sep = current.endsWith('\n') ? '\n' : '\n\n';
-    fs.appendFileSync(dest, `${sep}${block}`);
-    return { created: true, path: dest, status: 'appended' };
-}
-
-/**
  * Drop `<!-- template-only:begin -->…<!-- template-only:end -->` regions.
  *
  * The template carries guidance for whoever edits *the template*, which is
@@ -171,8 +143,10 @@ function pmPrefix(target) {
     if (fs.existsSync(path.join(target, 'pnpm-lock.yaml'))) return 'pnpm';
     if (fs.existsSync(path.join(target, 'yarn.lock'))) return 'yarn';
     // Bun 1.2+ writes a text `bun.lock`; `bun.lockb` is the legacy binary form.
-    if (fs.existsSync(path.join(target, 'bun.lock'))) return 'bun';
-    if (fs.existsSync(path.join(target, 'bun.lockb'))) return 'bun';
+    // `bun run`, not `bun`: bare `bun test`/`bun build` are Bun's own test
+    // runner and bundler, not the package.json scripts.
+    if (fs.existsSync(path.join(target, 'bun.lock'))) return 'bun run';
+    if (fs.existsSync(path.join(target, 'bun.lockb'))) return 'bun run';
     return 'npm run';
 }
 
@@ -289,10 +263,10 @@ function detectStackCommands(target) {
     }
     const requirements = readRequirements(target);
     if (!detected.lint_cmd && (fs.existsSync(path.join(target, 'ruff.toml')) || /\[tool\.ruff\]/.test(pyproject) || requires(requirements, 'ruff'))) {
-        detected.lint_cmd = `${pyTool(target, 'ruff')} check .`;
+        detected.lint_cmd = `${pyTool(target, 'ruff')} check`;
     }
     if (!detected.lint_cmd && (fs.existsSync(path.join(target, '.flake8')) || requires(requirements, 'flake8'))) {
-        detected.lint_cmd = `${pyTool(target, 'flake8')} .`;
+        detected.lint_cmd = pyTool(target, 'flake8');
     }
     if (!detected.test_cmd && (fs.existsSync(path.join(target, 'pytest.ini')) || /\[tool\.pytest/.test(pyproject) || requires(requirements, 'pytest'))) {
         detected.test_cmd = pyTool(target, 'pytest');
@@ -509,7 +483,6 @@ function detectFramework(target) {
 function renderClaudeMdTemplate(text, opts) {
     const substitutions = {
         PROJECT_NAME: opts.projectName,
-        PROJECT_ROOT: opts.projectRoot,
         LANGUAGE: opts.language,
         RUNTIME: opts.runtime,
         FRAMEWORK: opts.framework,
@@ -543,10 +516,7 @@ function reportMissingStackCommands(configPath) {
     }
     process.stdout.write(
         `\n[flow init] Done. Stack commands still blank: ${missing.join(', ')}\n` +
-        '  These are for the agent to finish, not the user. Infer each one from the repo\n' +
-        '  (venv, entrypoint, test files, Makefile, CI config, README), verify it actually\n' +
-        '  runs, then write it into .flow/config.md. Leave a key blank only when the project\n' +
-        '  genuinely has nothing to run for it, and say which.\n'
+        '  Agent: fill these per references/stack-command-inference.md.\n'
     );
     return missing;
 }
@@ -594,6 +564,10 @@ function main() {
 
     const configResult = copyIfMissing(configSrc, configDest);
     report('.flow/config.md', configResult);
+    // Only config.md is ever committed; the rest of .flow/ is session state.
+    // The file ignores itself too, so it never shows up as a change.
+    const ignoreDest = path.join(target, '.flow', '.gitignore');
+    if (!fs.existsSync(ignoreDest)) fs.writeFileSync(ignoreDest, '*\n!config.md\n');
     // Only fill in a freshly-created config.md — an existing one may already
     // hold the user's own edits, which copyIfMissing correctly left alone.
     if (configResult.created) {
@@ -630,12 +604,12 @@ function main() {
         const { language, runtime } = detectLanguageRuntime(target);
         const body = renderClaudeMdTemplate(fs.readFileSync(claudeSrc, 'utf8'), {
             projectName: detectProjectName(target, args.projectName),
-            projectRoot: target,
             language,
             runtime,
             framework: detectFramework(target),
         });
-        report('CLAUDE.md', appendSection(claudeDest, 'flow', body));
+        fs.writeFileSync(claudeDest, body);
+        report('CLAUDE.md', { created: true, path: claudeDest });
     } else {
         report('CLAUDE.md', { created: false, path: claudeSrc, missingSource: true });
     }
@@ -657,7 +631,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-    main, parseArgs, copyIfMissing, ensureDir, appendSection, stripTemplateOnly, readPmBackend,
+    main, parseArgs, copyIfMissing, ensureDir, stripTemplateOnly, readPmBackend,
     detectStackCommands, applyStackCommands, applyPmFields, pmPrefix,
     readStackCommands, missingStackCommands, reportMissingStackCommands,
     readRequirements, requires, venvBin, readMakeTargets,

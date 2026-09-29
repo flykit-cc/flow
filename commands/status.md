@@ -34,8 +34,9 @@ One `key=value` per line, under `[git]` / `[progress]` / `[pr]` headers:
 
 ## Step 2: In-flight work
 
-Call `TaskList` for background tasks and agents. For each, note its status and how long it
-has been running. This is the half of "what's running" that the shell cannot see.
+`Running` is the background agents and shells this session launched — you know them from
+your own conversation; for each, note its status and how long it has been running. This is
+the half of "what's running" that the shell cannot see. Call `TaskList` only for open tasks.
 
 Nothing running and nothing uncommitted means the session is idle, not broken — say so
 plainly rather than inventing work.
@@ -57,7 +58,8 @@ Next      CI is red on #12; that blocks the merge.
 Flag these when they apply, each in one line:
 
 - `behind > 0` — the branch is behind; a rebase or pull comes before more work.
-- `verification` is anything other than `passed` — surface it verbatim and offer
+- `verification` is anything other than `passed (build+test)` or
+  `passed (…, ran earlier this session, unchanged since)` — surface it verbatim and offer
   `${CLAUDE_PLUGIN_ROOT}/scripts/pause-helpers.sh run-verification`.
 - `age_days > 7` — the saved session is stale; its "next steps" may be obsolete.
 - `pr_checks=failing` — that outranks whatever else was planned.

@@ -44,7 +44,7 @@
     },
     {
       "name": "pause",
-      "description": "Save WIP and shut down agents cleanly; 'land' mode finalizes: CI checks, issue closing, commit, push, and ff-merge."
+      "description": "Save WIP and shut down agents cleanly; 'land' mode finalizes: CI checks, issue closing, commit, push, and ff-merge (solo) or a PR (team). 'after' lets running agents finish first; 'sleep' puts the Mac to sleep once it succeeds."
     },
     {
       "name": "audit",

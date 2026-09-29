@@ -1,6 +1,6 @@
 ---
 description: Run format and lint with auto-fix; report what remains.
-allowed-tools: Bash, Read, Grep
+allowed-tools: Bash, Read, Grep, AskUserQuestion
 ---
 # /flow:cleanup
 

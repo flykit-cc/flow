@@ -52,6 +52,10 @@ esac
 # copy that used to live here did not.
 FORMAT_CMD=$(flow_extract format_cmd)
 LINT_CMD=$(flow_extract lint_cmd)
+# `ruff check .` / `black .` target the whole repo; drop the trailing ` .` so
+# only the edited file is appended, never the repo.
+FORMAT_CMD="${FORMAT_CMD% .}"
+LINT_CMD="${LINT_CMD% .}"
 
 # Decide whether a configured command accepts a single trailing file path
 # argument. Looks at the tool name — the first word after unwrapping a
@@ -105,7 +109,7 @@ accepts_file_path() {
 maybe_fix() {
     local cmd="$1"
     case "$cmd" in
-        *eslint*|*ruff*|*biome*|*stylelint*|*standardrb*|*rubocop*)
+        *eslint*|*"ruff check"*|*biome*|*stylelint*|*standardrb*|*rubocop*)
             printf '%s --fix' "$cmd"
             ;;
         *)

@@ -17,6 +17,8 @@
 #   pause-helpers.sh set-verification-mode <ask|always|never>  # persist the choice into .flow/config.md
 #   pause-helpers.sh run-verification               # run build_cmd + test_cmd, report pass/fail
 #   pause-helpers.sh finish <title-file> <body-file> <commit-msg> [--no-push|--land] [--close <token>]
+#   pause-helpers.sh pause-pending set <flags>|read|clear  # durable "a pause is waiting on work" marker
+#   pause-helpers.sh schedule-sleep [seconds]       # macOS only: detached sleep after a delay (default 30)
 
 set -euo pipefail
 
@@ -30,8 +32,6 @@ MARKER="$STATE_DIR/last-pause"
 PROGRESS="$REPO_ROOT/.flow/session-progress.md"
 LOG="$REPO_ROOT/.flow/session-log.md"
 
-SECRET_RE="$(flow_secret_regex)"
-PRIVATE_RE="$(flow_private_regex)"
 
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
@@ -41,17 +41,27 @@ mkdir -p "$STATE_DIR" 2>/dev/null || true
 # One implementation so the two can never drift apart — they already had.
 flow_refuse_if_guarded() {
     local paths="$1" staged="$2"
-    if [ -n "$SECRET_RE" ] && printf '%s' "$paths" | grep -qE "$SECRET_RE"; then
+    local secret="" f
+    while IFS= read -r f; do
+        [ -n "$f" ] && flow_path_is_secret "$f" && secret="$secret  $f
+"
+    done <<< "$paths"
+    if [ -n "$secret" ]; then
         echo "FINISH ABORTED: these files match secret_globs and would be committed:" >&2
-        printf '%s' "$paths" | grep -E "$SECRET_RE" | sed 's/^/  /' >&2
+        printf '%s' "$secret" >&2
         echo "Add them to .gitignore (or remove them); if one is already staged, \`git reset\` it first." >&2
         return 2
     fi
     # Private paths can only reach the index by being staged before finish ran —
     # the staging loop never adds them itself.
-    if [ -n "$PRIVATE_RE" ] && printf '%s' "$staged" | grep -qE "$PRIVATE_RE"; then
+    local private="" f
+    while IFS= read -r f; do
+        [ -n "$f" ] && flow_path_is_private "$f" && private="$private  $f
+"
+    done <<< "$staged"
+    if [ -n "$private" ]; then
         echo "FINISH ABORTED: private paths are staged. Run \`git reset\` — these must never be pushed." >&2
-        printf '%s' "$staged" | grep -E "$PRIVATE_RE" | sed 's/^/  /' >&2
+        printf '%s' "$private" >&2
         return 2
     fi
     return 0
@@ -62,9 +72,15 @@ shift || true
 
 case "$cmd" in
   changed-files)
-    git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
-    git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+    # What a pause would commit — private paths (e.g. .flow/salvaged) never are,
+    # so they must not keep the "nothing to pause" fast-exit from firing.
+    { git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
+      git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
+      git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u | while IFS= read -r f; do
+      [ -n "$f" ] && ! flow_path_is_private "$f" && printf '%s\n' "$f"
+    done
+    true
     ;;
 
   diff-since-pause)
@@ -116,11 +132,15 @@ case "$cmd" in
     OPEN_TASKS=$(grep -cE '^[[:space:]]*- \[ \]' "$PROGRESS" 2>/dev/null || true)
     HAS_GOAL=$(awk '/^#+ *Goal/{flag=1; next} /^#+ /{flag=0} flag && NF{print; exit}' "$PROGRESS")
     HAS_PAUSED=$(awk '/^#+ *Paused/{flag=1; next} /^#+ /{flag=0} flag && NF{print; exit}' "$PROGRESS")
-    if [ "${OPEN_TASKS:-0}" -eq 0 ] && [ -z "$HAS_GOAL" ] && [ -z "$HAS_PAUSED" ]; then
+    # "Needs you" carries what an unattended pause could only have told a user who
+    # was not there. The chat report is gone by the next session, so this file is
+    # the only place it survives — a finished goal does not make it safe to drop.
+    HAS_NEEDS=$(awk 'tolower($0) ~ /^#+ *needs you/{flag=1; next} /^#+ /{flag=0} flag && /^[[:space:]]*- /{print; exit}' "$PROGRESS")
+    if [ "${OPEN_TASKS:-0}" -eq 0 ] && [ -z "$HAS_GOAL" ] && [ -z "$HAS_PAUSED" ] && [ -z "$HAS_NEEDS" ]; then
       rm -f "$PROGRESS"
       echo ".flow/session-progress.md deleted (nothing in flight)"
     else
-      echo ".flow/session-progress.md kept (open=${OPEN_TASKS:-0}, goal=${HAS_GOAL:+y}, paused=${HAS_PAUSED:+y})"
+      echo ".flow/session-progress.md kept (open=${OPEN_TASKS:-0}, goal=${HAS_GOAL:+y}, paused=${HAS_PAUSED:+y}, needs-you=${HAS_NEEDS:+y})"
     fi
     ;;
 
@@ -325,7 +345,7 @@ ${vtail}
     # PRE-FLIGHT: refuse before mutating anything.
     #
     # Everything below this point writes or deletes: the log block, the narration
-    # files, the shutdown marker, session-progress.md. Running the guards only
+    # files, session-progress.md. Running the guards only
     # after that means a refused pause still leaves a history block for a pause
     # that never happened, and can delete session state with no commit to show
     # for it. Validate first, mutate second.
@@ -333,7 +353,8 @@ ${vtail}
     # The candidate set is what the staging loop below would end up with: paths
     # already in the index, plus working-tree and untracked paths that are not
     # private (the loop skips those).
-    PREFLIGHT_STAGED=$(git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null || true)
+    # Deletions are left out: removing a path from git cannot leak its content.
+    PREFLIGHT_STAGED=$(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=d 2>/dev/null || true)
     PREFLIGHT_NEW=""
     while IFS= read -r f; do
       [ -n "$f" ] || continue
@@ -352,11 +373,16 @@ ${vtail}
     # Consuming them turns that into log-block's loud missing-file error instead.
     rm -f "$TITLE_FILE" "$BODY_FILE"
 
-    # A shutdown_request that outlives its session tells the next session's
-    # polling agents to exit before they do any work (see agent-workflow.md).
-    rm -f "$REPO_ROOT/.flow/session/shutdown_request"
-
     TRIM_RESULT=$("$0" trim-or-delete-progress)
+
+    # Projects initialised before init wrote this get it here, once.
+    [ -f "$REPO_ROOT/.flow/.gitignore" ] || printf '*\n!config.md\n' > "$REPO_ROOT/.flow/.gitignore"
+
+    # Only .flow/config.md is ever committed. A project that committed other
+    # .flow/ files before that rule stops tracking them here, once; they stay on disk.
+    git -C "$REPO_ROOT" ls-files -- .flow 2>/dev/null | grep -vx '.flow/config.md' | while IFS= read -r f; do
+      git -C "$REPO_ROOT" rm --cached -q -- "$f"
+    done || true
 
     # Stage uncommitted files individually (never `git add -A`), skipping paths
     # the project marks private. Private paths are work-in-progress artifacts
@@ -372,7 +398,7 @@ ${vtail}
 
     # Backstop: the pre-flight predicted this set, now check what git actually
     # staged. Same rules, one implementation.
-    STAGED_NOW=$(git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null || true)
+    STAGED_NOW=$(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=d 2>/dev/null || true)
     flow_refuse_if_guarded "$STAGED_NOW" "$STAGED_NOW" || exit 2
 
     if git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
@@ -414,22 +440,28 @@ ${vtail}
       elif ! git -C "$REPO_ROOT" fetch origin "$DEFAULT_BRANCH" 2>/dev/null; then
         LAND_INFO="LAND FAILED: could not fetch origin/$DEFAULT_BRANCH"
       elif { LAND_LOG=$(mktemp); ! git -C "$REPO_ROOT" rebase "origin/$DEFAULT_BRANCH" 2>&1 | tail -3 > "$LAND_LOG"; }; then
-        git -C "$REPO_ROOT" rebase --abort 2>/dev/null
+        git -C "$REPO_ROOT" rebase --abort 2>/dev/null || true
         LAND_INFO="LAND FAILED (rebase conflict): $(cat "$LAND_LOG")"
       else
         git -C "$REPO_ROOT" push --force-with-lease 2>/dev/null || true
-        git -C "$REPO_ROOT" checkout "$DEFAULT_BRANCH" 2>/dev/null
-        if git -C "$REPO_ROOT" merge --ff-only "$FEATURE_BRANCH" 2>&1 | tail -1 > "$LAND_LOG"; then
-          git -C "$REPO_ROOT" push 2>/dev/null
-          git -C "$REPO_ROOT" branch -d "$FEATURE_BRANCH" 2>/dev/null
-          git -C "$REPO_ROOT" push origin --delete "$FEATURE_BRANCH" 2>/dev/null || true
-          LAND_INFO="landed: $FEATURE_BRANCH -> $DEFAULT_BRANCH, branch deleted"
-        else
+        if ! git -C "$REPO_ROOT" checkout "$DEFAULT_BRANCH" 2>&1 | tail -1 > "$LAND_LOG"; then
+          LAND_INFO="LAND FAILED (checkout $DEFAULT_BRANCH): $(cat "$LAND_LOG")"
+        elif ! git -C "$REPO_ROOT" merge --ff-only "$FEATURE_BRANCH" 2>&1 | tail -1 > "$LAND_LOG"; then
           LAND_INFO="LAND FAILED (ff-merge): $(cat "$LAND_LOG")"
+        elif ! git -C "$REPO_ROOT" push 2>&1 | tail -1 > "$LAND_LOG"; then
+          # Keep the branch: the merge exists only locally until this push lands.
+          LAND_INFO="LAND FAILED (push $DEFAULT_BRANCH): $(cat "$LAND_LOG")"
+        else
+          git -C "$REPO_ROOT" branch -d "$FEATURE_BRANCH" 2>/dev/null || true
+          git -C "$REPO_ROOT" push origin --delete "$FEATURE_BRANCH" 2>/dev/null || true
+          LAND_INFO="landed: $FEATURE_BRANCH -> $DEFAULT_BRANCH at $(git -C "$REPO_ROOT" rev-parse --short HEAD), branch deleted"
         fi
       fi
     fi
 
+    # Only now has the pending pause actually happened. Cleared last so a
+    # finish that dies (refused, failing pre-commit hook) leaves the marker.
+    rm -f "$STATE_DIR/pause-pending"
     "$0" write-marker >/dev/null
 
     cat <<REPORT
@@ -439,6 +471,38 @@ push:$PUSH_INFO
 land:$LAND_INFO
 trim:$TRIM_RESULT
 REPORT
+    ;;
+
+  pause-pending)
+    # `/flow:pause after` can wait for hours. The marker lives in .flow/state/,
+    # not .flow/session/, so sweep-handoffs never archives it, and it survives a
+    # compaction that drops the conversation's memory of the pending pause.
+    PENDING="$STATE_DIR/pause-pending"
+    case "${1:-}" in
+      set)
+        shift
+        printf 'flags: %s\nstarted: %s\n' "${*:-(none)}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PENDING"
+        echo "pause-pending set: $*"
+        ;;
+      read)  [ -f "$PENDING" ] && cat "$PENDING" || echo "" ;;
+      clear) rm -f "$PENDING"; echo "pause-pending cleared" ;;
+      *) echo "pause-pending needs set <flags> | read | clear" >&2; exit 1 ;;
+    esac
+    ;;
+
+  schedule-sleep)
+    SECS="${1:-30}"
+    case "$SECS" in ''|*[!0-9]*) echo "schedule-sleep needs a whole number of seconds, got: $SECS" >&2; exit 1 ;; esac
+    # macOS only, by design: `pmset sleepnow` needs no sudo for the logged-in user,
+    # while Linux suspend needs an active local seat and fails silently over SSH.
+    if [ "${FLOW_UNAME:-$(uname -s)}" != "Darwin" ]; then
+      echo "sleep-skipped:not-macos"
+      exit 0
+    fi
+    SLEEP_CMD="${FLOW_SLEEP_CMD:-pmset sleepnow}"
+    # All fds go to /dev/null so the tool call returns at once.
+    nohup sh -c "sleep $SECS; $SLEEP_CMD" >/dev/null 2>&1 </dev/null &
+    echo "sleep-scheduled:${SECS}s pid=$! (cancel: kill $!)"
     ;;
 
   *)

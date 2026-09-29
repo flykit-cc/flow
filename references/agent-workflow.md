@@ -6,7 +6,7 @@ How the `flow` plugin's agents coordinate. Read this before changing how command
 
 The main Claude Code session is the **orchestrator**. It does not write code. It reads context, picks the right agent for the current phase, hands off, and decides what to do with the result.
 
-Agents do the work. Each agent is narrow: it has one job, one input file, one output file. This keeps token budgets predictable and makes failures localized.
+Agents do the work. Each agent is narrow: it has one job, a self-contained brief, and one report. This keeps token budgets predictable and makes failures localized.
 
 If you find the main agent editing source files directly, something has gone wrong — push the work into a `general-purpose` agent.
 
@@ -22,7 +22,7 @@ adherence) earns its keep.
 | `Explore` (built-in) | issue or task description, or a search query | inline report | reading code, mapping dependencies, locating symbols/patterns |
 | `superpowers:writing-plans` (skill) | an investigation / requirements | a written plan | turning facts into a stepwise plan with file-level changes |
 | `general-purpose` (built-in) | a plan (or a finding list) | edits on disk | implementation, including small refactors needed to land cleanly |
-| `reviewer` (flow) | a diff + file list | `.flow/session/review-<bucket>.md` | classifying findings as BREAKS / SECURITY / MINOR |
+| `reviewer` (flow) | a diff range + file list | a returned report (the orchestrator saves it to `.flow/session/review-<bucket>.md`) | classifying findings as BREAKS / SECURITY / MINOR |
 | `WebSearch` (built-in tool) | a question | inline synthesis | external docs, library references, RFCs |
 
 CI checks (lint/typecheck/build/test) and issue filing are no longer separate agents — they're
@@ -31,7 +31,7 @@ commands straight from `config.md`.
 
 ## Handoff via files
 
-Agents communicate through files in `.flow/session/`. Never via in-memory state.
+Handoffs live as files in `.flow/session/`. Agents that can write save their own; read-only agents (Explore, reviewer) return their report and the orchestrator saves it.
 
 Why files: agents are spawned as separate `Agent` tool calls. The orchestrator is the only thing that persists between phases. Files are the lowest-friction handoff that survives an agent finishing.
 
@@ -39,9 +39,7 @@ Convention:
 
 - One file per phase
 - Markdown with a clear top-level structure (each agent's prompt enforces it)
-- A handoff is spent once its phase lands. `/flow:continue` runs `continue-helpers.sh sweep-handoffs`, which **moves** every file older than `state/last-pause` into `.flow/session/spent/` and prints the names. Whatever remains is the current session's. **Never trust a handoff without that sweep, and never judge one by eye** — a `plan.md` from a previous session is indistinguishable from the current one by content alone, and an implementer will build against it.
-- With no `state/last-pause` at all, nothing can be dated and the sweep takes *everything* — deliberately. Guessing from timestamp gaps works when sessions are days apart and fails silently when they are hours apart, so the helper does not guess. Sweeping moves rather than deletes, which is what makes failing closed cheap: an over-swept file comes back with one `mv`, while a stale plan implemented in full does not.
-- `shutdown_request` is exempt from the staleness check (it's a control marker, not a phase handoff) and is cleared by `pause-helpers.sh finish` instead, so the next session's agents never inherit a standing order to exit.
+- A handoff is spent once its phase lands. `/flow:continue` runs `continue-helpers.sh sweep-handoffs`, which moves every file older than `state/last-pause` (everything, with no marker) into `.flow/session/spent/` — never trust a handoff without that sweep; the helper's comment says why.
 
 ## Deterministic helper layer
 
@@ -54,14 +52,9 @@ Commands push their *mechanics* into shell helpers under `${CLAUDE_PLUGIN_ROOT}/
 
 These helpers also touch a few session-state files, all under `.flow/`: `session-log.md` (append-only dated blocks) and `state/last-pause` (the pause marker).
 
-## Shutdown protocol
+## Shutdown
 
-Long-running agents (typically `general-purpose` in a multi-file change) are shut down two ways, used together:
-
-1. The orchestrator sends `shutdown_request` via `SendMessage` to a named running agent the moment it reports — this is how `/flow:autopilot` keeps the team lean.
-2. As a fallback for agents that poll the filesystem, the orchestrator writes `.flow/session/shutdown_request`. A polling agent then finishes the current edit (no half-written files), flushes its handoff file, and exits cleanly.
-
-`/flow:pause` (all modes) creates the shutdown_request file and waits up to 30 seconds before proceeding. This is best-effort — agents that don't poll will simply finish at their own pace.
+The orchestrator shuts an agent down via `SendMessage` the moment it reports — this is how `/flow:autopilot` keeps the team lean. `/flow:pause` does the same for anything still running and waits up to 30 seconds.
 
 > Note for autopilot: do NOT use `TeamCreate` / `TeamDelete` / `TaskCreate` / `TaskUpdate` to manage agents. They write to `~/.claude/` and reset `bypassPermissions`, which breaks `mode: "auto"` autonomy. Spawn agents directly with the `Agent` tool and shut them down with `SendMessage`.
 
@@ -73,14 +66,9 @@ The orchestrator partitions the planned changes by file and assigns each set to 
 
 This rule replaces the need for any locking or merge logic. If two agents want to edit the same file, the partition was wrong — re-plan.
 
-## Errors and retries
+## Errors
 
-Agents report failure by writing an `error:` block at the top of their handoff file. The orchestrator reads this and decides:
-
-- Recoverable (e.g. flaky test): retry the same agent once
-- Unrecoverable (e.g. missing dependency): surface to the user via `AskUserQuestion`
-
-Do not retry more than twice. Two failures from the same agent on the same input usually means the input is wrong, not the agent.
+An agent that fails twice on the same input: file it as a question or ticket and don't retry again — the input is wrong, not the agent. Never `AskUserQuestion` about it directly.
 
 ## Questions raised (mandatory report section)
 

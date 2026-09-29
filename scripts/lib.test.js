@@ -69,41 +69,42 @@ test('flow_path_is_private does not treat a glob as a substring match', () => {
     assert.equal(shStatus(root, 'flow_path_is_private "my.claudex"'), 1);
 });
 
-test('flow_private_regex matches private paths under grep -E', () => {
+test('flow_path_is_private matches only whole path segments, not substrings', () => {
     const root = makeProject('# empty\n');
-    const re = sh(root, 'flow_private_regex');
-    const hit = execFileSync('bash', ['-c',
-        `printf '%s\\n' 'docs/superpowers/x.md' 'src/a.ts' | grep -cE ${JSON.stringify(re)} || true`],
-        { encoding: 'utf8' }).trim();
-    assert.equal(hit, '1');
+    for (const p of ['docs/superpowers/plan.md', '.claude/config.md']) {
+        assert.equal(shStatus(root, `flow_path_is_private "${p}"`), 0, `${p} must be private`);
+    }
+    for (const p of ['my.claudex', 'src/.claudex/a.ts', 'notdocs/superpowers/a.md']) {
+        assert.equal(shStatus(root, `flow_path_is_private "${p}"`), 1, `${p} must not be private`);
+    }
 });
 
-test('flow_private_regex matches only whole path segments, not substrings', () => {
-    const root = makeProject('# empty\n');
-    const re = sh(root, 'flow_private_regex');
-    const lines = [
-        'docs/superpowers/plan.md',   // MUST match: nested inside the glob
-        '.claude/config.md',          // MUST match: glob at path start
-        'my.claudex',                 // MUST NOT match: substring of a longer segment
-        'src/.claudex/a.ts',          // MUST NOT match: same, mid-path
-        'notdocs/superpowers/a.md',   // MUST NOT match: glob is a suffix of a longer segment
-    ];
-    const matched = execFileSync('bash', ['-c',
-        `printf '%s\\n' ${lines.map(l => JSON.stringify(l)).join(' ')} | grep -E ${JSON.stringify(re)} || true`],
-        { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-    assert.deepEqual(matched.sort(), ['.claude/config.md', 'docs/superpowers/plan.md'].sort());
+// Only .flow/config.md is ever committed; everything else under .flow/ is
+// private, even when config.md sets its own private_globs.
+const FLOW_PRIVATE = ['.flow/session-log.md', '.flow/questions.md', '.flow/session-progress.md',
+    '.flow/local.md', '.flow/state/pause-pending', '.flow/config.md.bak', '.flow/config'];
+
+test('flow_path_is_private: all of .flow/ except config.md, whatever private_globs says', () => {
+    for (const root of [makeProject('# empty\n'), makeProject('- private_globs: notes\n')]) {
+        for (const p of FLOW_PRIVATE) {
+            assert.equal(shStatus(root, `flow_path_is_private "${p}"`), 0, `${p} must be private`);
+        }
+        assert.equal(shStatus(root, 'flow_path_is_private ".flow/config.md"'), 1,
+            'project config must be stageable');
+    }
 });
 
-// 10. `.flow/` now holds the project's config, which is shareable project truth,
-// so the whole directory can no longer be private. Only the machine-local
-// override is. (The arming markers this once guarded went away with the
-// bash-guard hook — permissions.ask replaced them.)
-test('flow_path_is_private covers .flow/local.md but not .flow/config.md', () => {
+test('flow_path_is_secret matches name globs on the basename only', () => {
     const root = makeProject('# empty\n');
-    assert.equal(shStatus(root, 'flow_path_is_private ".flow/local.md"'), 0,
-        'machine-local override must stay private');
-    assert.equal(shStatus(root, 'flow_path_is_private ".flow/config.md"'), 1,
-        'project config must be stageable — it is shareable project truth');
+    for (const p of ['.env', '.env.local', 'config/.env', 'id_rsa', 'x.pem', 'secrets.json']) {
+        assert.equal(shStatus(root, `flow_path_is_secret "${p}"`), 0, `${p} must be secret`);
+    }
+    for (const p of ['src/secretStore.ts', 'src/secrets/index.ts', 'config/app.env.ts']) {
+        assert.equal(shStatus(root, `flow_path_is_secret "${p}"`), 1, `${p} must not be secret`);
+    }
+    const custom = makeProject('- secret_globs: *secret* config/keys/*\n');
+    assert.equal(shStatus(custom, 'flow_path_is_secret "src/secrets/index.ts"'), 1);
+    assert.equal(shStatus(custom, 'flow_path_is_secret "config/keys/a.txt"'), 0);
 });
 
 test('flow_stop_check_mode defaults to ask and rejects junk', () => {

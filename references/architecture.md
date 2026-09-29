@@ -14,7 +14,7 @@ The `flow` plugin is a **workflow backbone**. It does not know your stack. Your 
 
 <your-project>/.flow/                (written by /flow:init, removed by /flow:uninstall)
   config.md                          workflow + stack commands — SHAREABLE, commit it
-  local.md                           machine-local overrides — private, never committed
+  local.md                           machine-local overrides
   session-progress.md                CURRENT STATE ONLY — one Goal, one Paused at, one
                                      Next steps. Created by /flow:continue (cold start),
                                      rewritten whole (never appended) by /flow:pause in
@@ -27,11 +27,15 @@ The `flow` plugin is a **workflow backbone**. It does not know your stack. Your 
   session/                           agent handoffs, one file per phase. Spent once the
                                      phase lands; /flow:continue drops anything older
                                      than state/last-pause instead of reading it
+  session/spent/                     handoffs swept out of session/ by /flow:continue
   pause-title, pause-body            this pause's narration, consumed by `finish` —
                                      transient, never present between sessions
   state/last-pause                   pause marker (HEAD/branch/timestamp); also the
                                      freshness boundary for session/ handoffs
-  .allow-*                           one-shot arming markers, never committed
+  state/pause-pending                a requested pause that has not completed yet;
+                                     cleared by `finish`, surfaced by /flow:continue
+  salvaged/                          a stuck agent's work, saved by /flow:pause; never
+                                     swept, removed by /flow:uninstall only with --purge
 
 <your-project>/
   CLAUDE.md                          yours. Seeded from the template only when absent;
@@ -41,7 +45,7 @@ The `flow` plugin is a **workflow backbone**. It does not know your stack. Your 
   issues/                            only when pm_backend = local
 ```
 
-`.flow/config.md` is deliberately **shareable project truth**: commit it and collaborators get the same stack setup. Everything else under `.flow/` is session state or machine-local — the default `private_globs` keeps `local.md` and the arming markers out of commits. Durable cross-session memory lives outside the repo at `memory_path` (see config-template.md).
+`.flow/config.md` is deliberately **shareable project truth** and the only file under `.flow/` that is ever committed: collaborators get the same stack setup. Everything else under `.flow/` is session state or machine-local, and private — `/flow:pause` never stages it. Durable cross-session memory lives outside the repo at `memory_path` (see config-template.md).
 
 ## Who owns what
 
@@ -80,6 +84,6 @@ Claude Code reads `CLAUDE.md` from the project root automatically on every sessi
 
 ## Updating the plugin
 
-Plugin updates ship via the marketplace. Your project's `.flow/config.md` and `CLAUDE.md` are unaffected — they are yours, and `/flow:init` never overwrites a file that exists.
+Plugin updates ship via the marketplace. Your project's `.flow/config.md` and `CLAUDE.md` are unaffected — they are yours: `/flow:init` never overwrites a file that exists, and `/flow:uninstall` never touches `CLAUDE.md`.
 
 The flip side: because nothing is overwritten, **a template change in a plugin update does not reach a project that was already initialised**. Re-running `/flow:init` will report `already exists, skipping` and change nothing. To adopt a new template, run `/flow:uninstall` first (it asks before dropping session state), then `/flow:init` again — and expect to re-apply any hand edits to `config.md`.

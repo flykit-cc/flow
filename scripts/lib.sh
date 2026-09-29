@@ -52,7 +52,7 @@ flow_extract() {
 
 # NOTE on reading these glob lists: never iterate `$(flow_*_globs)` unquoted.
 # Bash applies PATHNAME EXPANSION to an unquoted command substitution, so a
-# pattern like `*secret*` is replaced by whatever matches it in the CURRENT
+# pattern like `*.pem` is replaced by whatever matches it in the CURRENT
 # DIRECTORY — the pattern itself is then gone and the guard silently stops
 # matching anything else. `read -ra` word-splits without globbing, so the
 # patterns stay literal regardless of cwd.
@@ -66,45 +66,26 @@ flow_secret_globs() {
     if [ -n "$v" ]; then
         printf '%s' "$v"
     else
-        printf '%s' '.env .env.* *.env *.env.* *.pem *.key id_rsa *_rsa *.p12 *.pfx *.keystore credentials.json token.json *secret* *.gpg'
+        printf '%s' '.env .env.* *.env *.pem *.key id_rsa *_rsa *.p12 *.pfx *.keystore credentials.json token.json secrets.json secrets.yml secrets.yaml secrets.toml client_secret*.json *.gpg'
     fi
 }
 
-# Build an ERE that matches any secret glob, for grepping a *list of paths*
-# (one per line, e.g. `git diff --cached --name-only`) — not a shell command
-# string; see hooks/secret-guard.sh for that case, which tests individual
-# tokens against flow_path_is_secret instead. Each glob is anchored to a
-# whole path component at the end of the line, so `*.key` only matches a
-# basename actually *ending* in `.key` — not any path that merely contains
-# the substring, which used to false-positive on e.g. `src/private.key.ts`
-# (extension `.ts`, `.key` only appears mid-name). Converts a few glob
-# metachars to regex. Best-effort; defense-in-depth only.
-flow_secret_regex() {
-    local glob out=""
-    local -a _globs
-    read -ra _globs <<< "$(flow_secret_globs)"
-    for glob in "${_globs[@]}"; do
-        # Escape regex specials, then translate glob * (confined to one path
-        # component, i.e. it does not cross a `/`).
-        local re
-        re="$(printf '%s' "$glob" | sed -E 's/[].[^$()+{}|\\]/\\&/g; s/\*/[^\/]*/g')"
-        re="(^|/)${re}\$"
-        if [ -z "$out" ]; then out="$re"; else out="$out|$re"; fi
-    done
-    printf '%s' "$out"
-}
-
 # Does a path match any secret glob? Returns 0 (match) / 1 (no match).
+# A glob without a `/` is matched against the basename only, so a directory
+# name (src/secrets/index.ts) never makes the files inside it secret.
 flow_path_is_secret() {
     local path="$1" glob base
     base="$(basename "$path")"
+    # Committed placeholders, not secrets.
+    case "$base" in .env.example|.env.sample|.env.template) return 1 ;; esac
     local -a _globs
     read -ra _globs <<< "$(flow_secret_globs)"
     for glob in "${_globs[@]}"; do
         # shellcheck disable=SC2254
-        case "$path" in $glob|*/$glob) return 0;; esac
-        # shellcheck disable=SC2254
-        case "$base" in $glob) return 0;; esac
+        case "$glob" in
+            */*) case "$path" in $glob|*/$glob) return 0;; esac ;;
+            *)   case "$base" in $glob) return 0;; esac ;;
+        esac
     done
     return 1
 }
@@ -124,19 +105,13 @@ flow_memory_path() {
 # Space-separated glob patterns naming paths that are private to this machine:
 # work-in-progress artifacts that must never be staged or pushed. Distinct from
 # secret_globs, which is about credentials. Config key: private_globs.
+# Separately, everything under .flow/ except config.md is always private,
+# whatever this list says — see flow_path_is_private.
 flow_private_globs() {
     local v
     v="$(flow_extract private_globs)"
-    if [ -n "$v" ]; then
-        printf '%s' "$v"
-    else
-        # The whole .flow directory, not just .flow/local.md — it also holds
-        # the one-shot arming markers (.allow-destructive, .allow-expensive).
-        # If only local.md were private, `finish`'s blanket-staging-free path
-        # would still stage a marker file, handing every clone/CI run of the
-        # project a standing bypass the moment it's committed once.
-        printf '%s' '.claude docs/superpowers .flow/local.md'
-    fi
+    [ -n "$v" ] || v='.claude docs/superpowers'
+    printf '%s' "$v"
 }
 
 # Does a path fall inside a private glob? Accepts absolute or repo-relative
@@ -145,6 +120,12 @@ flow_path_is_private() {
     local path="$1" glob rel root
     root="$(flow_project_root)"
     rel="${path#"$root"/}"
+    # Only config.md under .flow/ is ever committed: the rest is session state,
+    # markers and agent output.
+    case "$rel" in
+        .flow/config.md) return 1 ;;
+        .flow/*) return 0 ;;
+    esac
     local -a _globs
     read -ra _globs <<< "$(flow_private_globs)"
     for glob in "${_globs[@]}"; do
@@ -152,19 +133,6 @@ flow_path_is_private() {
         case "$rel" in $glob|$glob/*) return 0;; esac
     done
     return 1
-}
-
-# ERE alternation matching any private glob, for grepping a list of paths.
-flow_private_regex() {
-    local glob out="" re
-    local -a _globs
-    read -ra _globs <<< "$(flow_private_globs)"
-    for glob in "${_globs[@]}"; do
-        re="$(printf '%s' "$glob" | sed -E 's/[].[^$()+{}|\\]/\\&/g; s/\*/[^[:space:]]*/g')"
-        re="(^|/)${re}(/|$)"
-        if [ -z "$out" ]; then out="$re"; else out="$out|$re"; fi
-    done
-    printf '%s' "$out"
 }
 
 # How /flow:pause's verification decision behaves. Config key: stop_check.

@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const SCRIPT = path.join(__dirname, 'uninstall.js');
-const { plan, stripFlowBlock } = require('./uninstall.js');
+const { plan } = require('./uninstall.js');
 
 function run(target, extra = []) {
     return execFileSync('node', [SCRIPT, '--target', target, ...extra], {
@@ -25,7 +25,6 @@ function makeProject(opts = {}) {
     fs.writeFileSync(path.join(root, '.flow', 'session-progress.md'), 'wip\n');
     fs.writeFileSync(path.join(root, '.flow', 'session-log.md'), '## history\n');
     fs.writeFileSync(path.join(root, '.flow', 'state', 'last-pause'), 'sha\n');
-    if (opts.armed) fs.writeFileSync(path.join(root, '.flow', '.allow-destructive'), '1\n');
     if (opts.claudeMd) fs.writeFileSync(path.join(root, 'CLAUDE.md'), opts.claudeMd);
     if (opts.issues) {
         fs.mkdirSync(path.join(root, 'issues'), { recursive: true });
@@ -43,15 +42,29 @@ test('dry run by default — prints a plan and changes nothing', () => {
     assert.deepStrictEqual(fs.readdirSync(path.join(root, '.flow')).sort(), before);
 });
 
-test('--yes removes config, progress, state and arming markers', () => {
-    const root = makeProject({ armed: true });
+test('--yes removes config, progress, state and session', () => {
+    const root = makeProject();
+    fs.mkdirSync(path.join(root, '.flow', 'session'));
+    fs.writeFileSync(path.join(root, '.flow', 'session', 'audit.md'), 'x\n');
     run(root, ['--yes']);
 
     assert.ok(!fs.existsSync(path.join(root, '.flow', 'config.md')));
     assert.ok(!fs.existsSync(path.join(root, '.flow', 'session-progress.md')));
     assert.ok(!fs.existsSync(path.join(root, '.flow', 'state')));
-    assert.ok(!fs.existsSync(path.join(root, '.flow', '.allow-destructive')),
-        'an arming marker must never survive uninstall');
+    assert.ok(!fs.existsSync(path.join(root, '.flow', 'session')));
+});
+
+test('salvaged/ is kept without --purge and removed with it', () => {
+    const kept = makeProject();
+    fs.mkdirSync(path.join(kept, '.flow', 'salvaged'));
+    run(kept, ['--yes']);
+    assert.ok(fs.existsSync(path.join(kept, '.flow', 'salvaged')),
+        'it may be the only copy of a stuck agent\'s work');
+
+    const purged = makeProject();
+    fs.mkdirSync(path.join(purged, '.flow', 'salvaged'));
+    run(purged, ['--yes', '--purge']);
+    assert.ok(!fs.existsSync(path.join(purged, '.flow', 'salvaged')));
 });
 
 test('--keep-progress spares the live session thread', () => {
@@ -88,30 +101,10 @@ test('session-log.md is kept without --purge and removed with it', () => {
     assert.ok(!fs.existsSync(path.join(purged, '.flow', 'session-log.md')));
 });
 
-test('a CLAUDE.md the user owns keeps its content, loses only the flow block', () => {
-    const root = makeProject({
-        claudeMd: '# My project\n\nReal docs.\n\n<!-- flow:begin -->\ngeneric template\n<!-- flow:end -->\n',
-    });
-    run(root, ['--yes']);
-
-    const after = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
-    assert.match(after, /Real docs\./);
-    assert.ok(!after.includes('flow:begin'));
-    assert.ok(!after.includes('generic template'));
-});
-
-test('a CLAUDE.md containing only the flow block is deleted', () => {
-    const root = makeProject({
-        claudeMd: '<!-- flow:begin -->\ngenerated\n<!-- flow:end -->\n',
-    });
-    run(root, ['--yes']);
-    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.md')));
-});
-
-test('a CLAUDE.md with no flow block is never touched', () => {
-    const original = '# Mine\n\nNothing to do with flow.\n';
+test('CLAUDE.md is never touched — the user may have edited it', () => {
+    const original = '# my-app\n\nSeeded by init, then edited.\n';
     const root = makeProject({ claudeMd: original });
-    run(root, ['--yes']);
+    run(root, ['--yes', '--purge']);
     assert.strictEqual(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8'), original);
 });
 
@@ -142,15 +135,8 @@ test('a project without flow reports nothing to remove', () => {
     assert.match(out, /nothing to remove/);
 });
 
-test('stripFlowBlock leaves content lacking an end marker alone', () => {
-    const broken = '# Mine\n\n<!-- flow:begin -->\nunterminated\n';
-    const { text, found } = stripFlowBlock(broken);
-    assert.strictEqual(found, false);
-    assert.strictEqual(text, broken, 'a malformed block must not eat the rest of the file');
-});
-
 test('plan() is pure — it reports without removing anything', () => {
-    const root = makeProject({ claudeMd: '# x\n<!-- flow:begin -->\ny\n<!-- flow:end -->\n' });
+    const root = makeProject();
     const before = fs.readdirSync(root).sort();
     const actions = plan(root, {});
     assert.ok(actions.length > 0);

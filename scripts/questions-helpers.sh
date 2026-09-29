@@ -7,9 +7,12 @@
 #   questions-helpers.sh counts <file>                 # open=N backlog=N answered=N assumed=N retired=N pending_apply=N
 #   questions-helpers.sh state-line <file>              # one-line summary for prompts/hooks (never blocks: exit 0)
 #   questions-helpers.sh top-open <file>                # first ## Q block with status: open
-#   questions-helpers.sh wip-limit <config.md>          # question_wip value, default 3
+#   questions-helpers.sh wip-limit                      # question_wip from .flow/config.md, default 3
 
 set -u
+
+# shellcheck source=lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 SUB="${1:-}"; FILE="${2:-}"
 
@@ -94,8 +97,8 @@ top_open() {
 }
 
 wip_limit() {
-    local v=""
-    [ -f "${1:-}" ] && v=$(grep -m1 -E '^[[:space:]]*-?[[:space:]]*question_wip:' "$1" | sed -E 's/^[^:]*:[[:space:]]*//' | tr -d '[:space:]')
+    local v
+    v="$(flow_extract question_wip)"
     case "$v" in (''|*[!0-9]*) echo 3 ;; (*) echo "$v" ;; esac
 }
 
@@ -110,6 +113,6 @@ case "$SUB" in
                 fi ;;
     state-line) state_line "$FILE" ;;
     top-open)   top_open "$FILE" ;;
-    wip-limit)  wip_limit "$FILE" ;;
-    *) echo "usage: questions-helpers.sh {validate|counts|state-line|top-open|wip-limit} <file>" >&2; exit 2 ;;
+    wip-limit)  wip_limit ;;
+    *) echo "usage: questions-helpers.sh {validate|counts|state-line|top-open} <file> | wip-limit" >&2; exit 2 ;;
 esac

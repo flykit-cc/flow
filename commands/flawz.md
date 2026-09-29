@@ -1,6 +1,6 @@
 ---
 description: Hostile-but-honest flaw hunt on a plan, spec, design, or reasoning (not code diffs — that's /flow:deep-review). Real flaws only, no invention. If clean, say so and proceed; if flawed, recommend fixes.
-allowed-tools: Bash, Read, Glob, Grep, WebSearch, WebFetch, AskUserQuestion
+allowed-tools: Bash, Read, Edit, Glob, Grep, WebSearch, WebFetch, AskUserQuestion
 ---
 # /flow:flawz
 

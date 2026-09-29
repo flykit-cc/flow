@@ -113,8 +113,16 @@ test('top-open: prints exactly the first open block', () => {
     assert.ok(!r.out.includes('## Q2'));
 });
 
-test('wip-limit: reads config value, defaults to 3', () => {
-    assert.equal(run('wip-limit', write('cfg.md', '- question_wip: 5\n')).out, '5');
-    assert.equal(run('wip-limit', write('cfg2.md', '- question_wip:\n')).out, '3');
-    assert.equal(run('wip-limit', path.join(tmp, 'nocfg.md')).out, '3');
+test('wip-limit: reads question_wip from the project config, defaults to 3', () => {
+    const wip = (config) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qh-wip-'));
+        fs.mkdirSync(path.join(root, '.flow'));
+        if (config !== null) fs.writeFileSync(path.join(root, '.flow', 'config.md'), config);
+        return spawnSync('bash', [SCRIPT, 'wip-limit'], {
+            encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+        }).stdout.trim();
+    };
+    assert.equal(wip('- question_wip: 5\n'), '5');
+    assert.equal(wip('- question_wip:\n'), '3');
+    assert.equal(wip(null), '3');
 });

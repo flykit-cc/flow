@@ -44,9 +44,12 @@ this project runs it, and keep the path relative to the project root.
 
 A command that was never run is a guess. Run each one and check it does what the key claims:
 
-- `test_cmd`, `lint_cmd`, `typecheck_cmd`, `format_cmd` — run it. Real findings (failing
-  tests, lint errors) mean the command works; that is a pass. Only "command not found",
-  "no such file", "unknown option", or "no tests ran" mean the command is wrong.
+- `test_cmd`, `typecheck_cmd`, and a `lint_cmd` that only reports — run it. Real findings
+  (failing tests, lint errors) mean the command works; that is a pass. Only "command not
+  found", "no such file", "unknown option", or "no tests ran" mean the command is wrong.
+- `format_cmd`, and a `lint_cmd` that fixes (`--fix`, `--write`) — never run the fixing form:
+  it would rewrite the repo. Run its check form (`black --check .`, `prettier --check .`,
+  `ruff format --check`) or `<tool> --version`, then write the fixing form.
 - `build_cmd` — run it if it is cheap. If it is slow or writes artifacts, verify the tool
   resolves (`<tool> --version`) and say in the report that the full build was not run.
 - `dev_cmd` — never leave a server running. Check the entrypoint exists and the interpreter

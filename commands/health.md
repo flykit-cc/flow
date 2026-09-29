@@ -19,26 +19,31 @@ Run each check and collect the result. Print a table at the end.
 - Does it parse? (frontmatter or key:value lines as defined in the template)
 - Are required fields present: `workflow_mode`, `pm_backend`, `dev_cmd`, `lint_cmd`, `build_cmd`, `test_cmd`?
 
-A `*_cmd` key that is present but **blank** is your work, not the user's. Do not report it as
-"fill this in yourself" — that is exactly the chore `/flow:init` Step 3 exists to remove.
-Infer it from the repo, verify it runs, and write it in, following
-`${CLAUDE_PLUGIN_ROOT}/references/stack-command-inference.md`. Report it as `FIXED` with the
-command you wrote. Only a key you inferred and could *not* verify — or one with genuinely
-conflicting evidence — is worth raising with the user, and then with a recommendation, not an
-open question. A key that is blank because the project has no such step is `OK`, not a
-finding; say so in the note.
+A blank `*_cmd` is yours to fill per `${CLAUDE_PLUGIN_ROOT}/references/stack-command-inference.md`;
+report it as `FIXED` with the command you wrote, or `OK` when the project has no such step.
 
 ### 2. CLAUDE.md freshness
 
 - Does `$CLAUDE_PROJECT_DIR/CLAUDE.md` exist?
-- Last modified more than 90 days ago? Flag as stale.
+- Last committed more than 90 days ago (`git log -1 --format=%cr -- CLAUDE.md`)? Flag as stale.
 - Does it reference commands or paths that no longer exist? Spot-check the Stack and Structure sections.
 
 ### 3. Hook wiring
 
-- Does `$CLAUDE_PROJECT_DIR/.claude/settings.json` exist?
-- Are the flow plugin's hooks (if any) present in its `hooks` array?
-- Print the list of currently wired hooks.
+flow's hooks are wired by the plugin itself, in `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json` — not
+in the project's settings. Check that file is valid JSON and every script it runs parses:
+
+```bash
+H="${CLAUDE_PLUGIN_ROOT}/hooks"
+jq empty "$H/hooks.json" || echo "hooks.json: INVALID"
+for f in $(grep -o 'hooks/[a-z-]*\.sh' "$H/hooks.json" | sort -u); do
+  bash -n "${CLAUDE_PLUGIN_ROOT}/$f" || echo "$f: SYNTAX ERROR"
+done
+```
+
+Any flow hook (a `${CLAUDE_PLUGIN_ROOT}/hooks/…` or flow script path) found in
+`$CLAUDE_PROJECT_DIR/.claude/settings.json` is a stale leftover from an older flow version:
+flag it for the user to remove by hand.
 
 ### 4. Required commands
 
@@ -55,7 +60,7 @@ If it is missing, report it as a **failure, not a warning**, and say plainly wha
 ### 5. PM backend connectivity
 
 - **github**: `gh auth status` — pass if logged in
-- **linear**: check that a Linear MCP server is configured in `.claude/settings.json`
+- **linear**: pass if a Linear MCP server is available — `claude mcp list`, or Linear MCP tools in this session
 - **local**: check that `$CLAUDE_PROJECT_DIR/issues/` exists and is readable
 
 ### 6. Git state
@@ -72,7 +77,7 @@ Print a table:
 CHECK                          STATUS    NOTE
 config.md                      FIXED     test_cmd was blank -> .venv/bin/pytest (23 passed)
 CLAUDE.md freshness            STALE     last touched 124 days ago
-hooks                          OK        2 wired
+hooks                          OK        hooks.json valid, scripts parse
 commands on PATH               FAIL      `<missing>` not found
 pm backend                     OK
 git                            OK

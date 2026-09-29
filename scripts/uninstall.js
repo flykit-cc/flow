@@ -11,16 +11,15 @@
  * Removes:
  *   .flow/config.md, .flow/local.md
  *   .flow/session-progress.md — unless --keep-progress
- *   .flow/state/ and the one-shot arming markers (.flow/.allow-*)
- *   the <!-- flow:begin -->…<!-- flow:end --> block in CLAUDE.md
+ *   .flow/state/, .flow/session/
  *   issues/  — only when empty; never deletes issue files
  *
- * Keeps unless --purge (durable state: history and answered decisions):
- *   .flow/session-log.md — append-only history, expensive to lose and cheap
- *   to keep. It is the one file here that cannot be regenerated.
+ * Keeps unless --purge (durable state that cannot be regenerated):
+ *   .flow/session-log.md, .flow/questions.md, .flow/salvaged/ — the last may be
+ *   the only copy of a stuck agent's work.
  *
- * Never touches: .claude/settings.json (flow does not manage it), anything
- * outside the target, or a CLAUDE.md with no flow block.
+ * Never touches: CLAUDE.md (the user may have edited it), .claude/settings.json
+ * (flow does not manage it), or anything outside the target.
  */
 
 'use strict';
@@ -48,30 +47,9 @@ function printHelp() {
         '  --target, -t      Project directory (default: cwd)\n' +
         '  --yes, -y         Actually remove; without it, only prints the plan\n' +
         '  --keep-progress   Keep .flow/session-progress.md (your live session thread)\n' +
-        '  --purge           Also delete .flow/session-log.md and .flow/questions.md\n' +
+        '  --purge           Also delete .flow/session-log.md, .flow/questions.md and .flow/salvaged/\n' +
         '  --help, -h        Show this help\n'
     );
-}
-
-const FLOW_BEGIN = '<!-- flow:begin -->';
-const FLOW_END = '<!-- flow:end -->';
-
-/**
- * Strip the marked flow block from CLAUDE.md content.
- * @returns {{ text: string, found: boolean, onlyFlow: boolean }}
- *   onlyFlow is true when the block was the entire file — i.e. init created
- *   it, so there is nothing of the user's to preserve.
- */
-function stripFlowBlock(content) {
-    const start = content.indexOf(FLOW_BEGIN);
-    if (start === -1) return { text: content, found: false, onlyFlow: false };
-    const endIdx = content.indexOf(FLOW_END, start);
-    if (endIdx === -1) return { text: content, found: false, onlyFlow: false };
-
-    const text = (content.slice(0, start) + content.slice(endIdx + FLOW_END.length))
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-    return { text: text ? text + '\n' : '', found: true, onlyFlow: text === '' };
 }
 
 /** Is this directory empty (so it is safe to remove)? */
@@ -86,7 +64,7 @@ function isEmptyDir(dir) {
 /**
  * Build the list of actions for `target`, without performing any of them.
  * Each action is { kind, path, note? } where kind is
- * 'remove-file' | 'remove-dir' | 'edit-claude-md' | 'remove-claude-md'.
+ * 'remove-file' | 'remove-dir' | 'keep'.
  */
 function plan(target, opts = {}) {
     const actions = [];
@@ -101,7 +79,8 @@ function plan(target, opts = {}) {
     // like the log, not a live thread. Removing it as a side effect of uninstall
     // would throw away the record of why things were decided, so it takes the
     // same explicit --purge as the log.
-    if (opts.purge) files.push('session-log.md', 'questions.md');
+    // .gitignore keeps whatever stays behind (the log, questions) out of git.
+    if (opts.purge) files.push('session-log.md', 'questions.md', '.gitignore');
     for (const name of files) {
         const p = path.join(flowDir, name);
         if (fs.existsSync(p)) actions.push({ kind: 'remove-file', path: p });
@@ -115,18 +94,18 @@ function plan(target, opts = {}) {
         });
     }
 
-    // Arming markers are one-shot grants; leaving one behind would hand the
-    // next session a standing bypass.
-    if (fs.existsSync(flowDir)) {
-        for (const name of fs.readdirSync(flowDir)) {
-            if (name.startsWith('.allow-')) {
-                actions.push({ kind: 'remove-file', path: path.join(flowDir, name) });
-            }
-        }
+    for (const name of ['state', 'session']) {
+        const dir = path.join(flowDir, name);
+        if (fs.existsSync(dir)) actions.push({ kind: 'remove-dir', path: dir });
     }
 
-    const stateDir = path.join(flowDir, 'state');
-    if (fs.existsSync(stateDir)) actions.push({ kind: 'remove-dir', path: stateDir });
+    // salvaged/ may be the only copy of a stuck agent's work.
+    const salvagedDir = path.join(flowDir, 'salvaged');
+    if (fs.existsSync(salvagedDir)) {
+        actions.push(opts.purge
+            ? { kind: 'remove-dir', path: salvagedDir }
+            : { kind: 'keep', path: salvagedDir, note: 'salvaged agent work — use --purge to delete' });
+    }
 
     if (!opts.purge && fs.existsSync(path.join(flowDir, 'questions.md'))) {
         actions.push({
@@ -142,16 +121,6 @@ function plan(target, opts = {}) {
             path: path.join(flowDir, 'session-log.md'),
             note: 'append-only history — use --purge to delete',
         });
-    }
-
-    const claudeMd = path.join(target, 'CLAUDE.md');
-    if (fs.existsSync(claudeMd)) {
-        const { found, onlyFlow } = stripFlowBlock(fs.readFileSync(claudeMd, 'utf8'));
-        if (found && onlyFlow) {
-            actions.push({ kind: 'remove-claude-md', path: claudeMd, note: 'created by flow, contains nothing else' });
-        } else if (found) {
-            actions.push({ kind: 'edit-claude-md', path: claudeMd, note: 'remove the flow block, keep your content' });
-        }
     }
 
     const issues = path.join(target, 'issues');
@@ -173,14 +142,6 @@ function apply(actions) {
             case 'remove-dir':
                 fs.rmSync(a.path, { recursive: true, force: true });
                 break;
-            case 'remove-claude-md':
-                fs.rmSync(a.path, { force: true });
-                break;
-            case 'edit-claude-md': {
-                const { text } = stripFlowBlock(fs.readFileSync(a.path, 'utf8'));
-                fs.writeFileSync(a.path, text);
-                break;
-            }
             default:
                 break; // 'keep' is informational
         }
@@ -210,8 +171,6 @@ function main() {
     const labels = {
         'remove-file': 'remove',
         'remove-dir': 'remove dir',
-        'remove-claude-md': 'remove',
-        'edit-claude-md': 'edit',
         keep: 'keep',
     };
     for (const a of actions) {
@@ -233,4 +192,4 @@ if (require.main === module) {
     process.exit(main());
 }
 
-module.exports = { main, parseArgs, plan, apply, stripFlowBlock, isEmptyDir };
+module.exports = { main, parseArgs, plan, apply, isEmptyDir };

@@ -1,6 +1,6 @@
 ---
 description: Autonomous multi-sprint loop — pick issues, spawn a parallel agent team, deep-review, push, repeat; self-generate work via audit when issues run out.
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion, SendMessage
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, AskUserQuestion, SendMessage
 ---
 # /flow:autopilot
 
@@ -34,14 +34,14 @@ Questions raised during autopilot (by agents or the loop itself) are FILED into 
 ## Phase 0: Setup
 
 1. `git status --short` and `git branch --show-current`.
-   - Uncommitted changes: fix any obvious breakage, then commit them as a clean revert point.
    - Determine the default branch: `git symbolic-ref --short refs/remotes/origin/HEAD` (fallback `main`).
-   - `solo` mode: work on the default branch; `git pull` for a clean base.
+   - `solo` mode: work on the default branch; `git pull` for a clean base (after step 2 settles any uncommitted changes).
    - `team` mode: each sprint gets its own feature branch (created in Phase 2); start from an up-to-date default branch.
-2. **AskUserQuestion** — ask both questions below in a single prompt. This is the only AskUserQuestion in the whole flow.
+2. **AskUserQuestion** — ask the questions below in a single prompt. This is the only AskUserQuestion in the whole flow.
 
    **Q1 "Model"** (header `Model`): `Dynamic — auto-pick per agent (Recommended)` / `All Opus` / `All Sonnet (fast)`.
    **Q2 "Review"** (header `Review`): `Deep review before every push (Recommended)` / `Skip reviews (fast, risky)`.
+   **Q3 "Uncommitted"** (header `Uncommitted`, only if `git status` showed uncommitted changes): `Include in sprint 1` / `Stash them` / `Abort`.
 
 3. If issue numbers were passed as arguments, use them and skip Phase 1. Otherwise auto-pick (Phase 1).
 
@@ -54,15 +54,15 @@ Questions raised during autopilot (by agents or the loop itself) are FILED into 
 2. **Batch a sprint** with judgment: prioritize by label weight (high > medium > low), group interdependent issues into one sprint, and identify what can run in parallel (different parts of the codebase).
 3. **Plan the team**: decide how many `general-purpose` implementers and how to split work. Small issues can share one; large features get their own.
 4. **Plan file ownership**: every implementer gets a STRICT, non-overlapping set of files it may create or modify. No two implementers touch the same file. If two issues share files, they go to the same implementer. This replaces all locking — see `agent-workflow.md`.
-5. Write the sprint plan to `$CLAUDE_PROJECT_DIR/session-progress.md` and proceed immediately (no approval).
+5. Write the sprint plan to `$CLAUDE_PROJECT_DIR/.flow/session-progress.md` (keeping any `## Needs you` section already in it) and proceed immediately (no approval).
 
 ## Phase 2: Implementation
 
 1. **Claim issues**: github → `gh issue edit <n> --add-assignee @me`; linear → assign via MCP; local → add `status: in-progress` to the file.
 2. **team mode only**: check out the default branch and pull, then cut the sprint branch from it — `git checkout <default> && git pull && git checkout -b flow/sprint-<n>-<slug>`. Branch from the default branch every sprint, not from the previous sprint's (possibly still-open-PR) branch — `/flow:pause land` doesn't merge in team mode, so the previous branch may not be in `<default>` yet.
 3. **Run the pipeline per issue group.** For each group, drive flow's normal chain via the `Agent` tool, handing off through `$CLAUDE_PROJECT_DIR/.flow/session/`:
-   - **`Explore`** — map the relevant code, write findings to `$CLAUDE_PROJECT_DIR/.flow/session/investigation-<group>.md`
-   - **`superpowers:writing-plans`** skill — turn the investigation into an ordered plan, write it to `$CLAUDE_PROJECT_DIR/.flow/session/plan-<group>.md`
+   - **`Explore`** — map the relevant code. It is read-only: save the report it returns to `$CLAUDE_PROJECT_DIR/.flow/session/investigation-<group>.md` yourself.
+   - **`superpowers:writing-plans`** skill — turn the investigation into an ordered plan, write it to `$CLAUDE_PROJECT_DIR/.flow/session/plan-<group>.md`. If superpowers isn't installed, write the plan yourself.
    - then spawn the **`general-purpose` agents in parallel** (one per file-ownership set) to implement the plan.
 4. **Every implementer spawn prompt MUST include, verbatim:**
    - The issue text (`gh issue view <n>` / MCP / local file) and the plan.
@@ -72,15 +72,16 @@ Questions raised during autopilot (by agents or the loop itself) are FILED into 
    - Spawn with **`mode: "auto"`** so agents auto-accept edits and never prompt.
 5. **Do NOT use `TeamCreate` / `TeamDelete` / `TaskCreate` / `TaskUpdate`.** They write to `~/.claude/` and reset `bypassPermissions` to `acceptEdits`. Use direct `Agent` spawns only.
 6. **Monitor and assist** (orchestrator does these directly — the only code the orchestrator writes is small cross-agent integration glue):
-   - Lint/format issues surface via Phase 2 step 8's explicit `lint_cmd`/`typecheck_cmd` run; fix errors it reports without waiting for the agent to finish.
    - Implementer reports `BLOCKED` → skip that issue, file a `blocked` ticket with the reason, move on.
    - Implementer reports `PLAN_MISMATCH` / needs context → resolve autonomously via `SendMessage`; if truly impossible, skip and file a ticket.
-7. **Shut down each agent the moment it finishes** — send `shutdown_request` via `SendMessage` (also written to `$CLAUDE_PROJECT_DIR/.flow/session/shutdown_request` per the protocol). Idle agents waste resources and clutter the terminal.
+7. **Shut down each agent the moment it finishes** — via `SendMessage`. Idle agents waste resources and clutter the terminal.
 8. **Fix cross-agent integration issues** (orchestrator, small glue only): registries/index files that need every new entry, import wiring, migration ordering. Then run `lint_cmd` + `typecheck_cmd` and fix failures.
 
 ## Phase 3: Deep review (unless "Skip reviews" was chosen)
 
-Run **`/flow:deep-review`** over the sprint diff. Do NOT duplicate its logic here — delegate. It fans out parallel `reviewer` agents (BREAKS / SECURITY / MINOR), synthesizes, runs the fix loop until zero BREAKS and zero SECURITY, verifies with `test_cmd`, and appends recurring findings to `known_pitfalls_path`. It auto-proceeds without prompting when called from autopilot.
+Run **`/flow:deep-review`** over the sprint diff. Do NOT duplicate its logic here — delegate. It fans out parallel `reviewer` agents (BREAKS / SECURITY / MINOR), synthesizes, runs the fix loop until zero BREAKS and zero SECURITY, running `test_cmd` after each fix pass, and appends recurring findings to `known_pitfalls_path`. It auto-proceeds without prompting when called from autopilot.
+
+If it ends with BREAKS or SECURITY still open, don't take them to Phase 4: revert the affected issues' changes, skip those issues, and file a ticket for each with the open findings.
 
 ## Phase 4: Push
 
@@ -94,7 +95,7 @@ Delegate to **`/flow:pause land`** (it runs CI checks, closes issues, and pushes
 
 ## Phase 5: Cleanup and loop
 
-1. Clear `$CLAUDE_PROJECT_DIR/.flow/session/*` per `agent-workflow.md`. Do not touch `.flow/session-progress.md` — `/flow:pause land` already settled it (deleted if the sprint shipped everything, kept if tasks remain).
+1. Clear `$CLAUDE_PROJECT_DIR/.flow/session/*` — this sprint's handoffs are spent. Do not touch `.flow/session-progress.md` — `/flow:pause land` already settled it (deleted if the sprint shipped everything, kept if tasks remain).
 2. **File tickets** for problems discovered during the sprint that were out of scope (tag `blocked` if they need a user decision).
 3. **Capture learnings** (only if `memory_path` is set): if the sprint produced durable cross-session knowledge, write a short memory file under `memory_path` and update its `MEMORY.md` index. Skip routine work.
 4. Output the **Sprint report** (format below).
@@ -102,10 +103,10 @@ Delegate to **`/flow:pause land`** (it runs CI checks, closes issues, and pushes
 
 ## Phase 6: Audit-driven discovery
 
-When actionable issues run out, generate more work by auditing — a self-sustaining loop with a guard against runaway churn.
+When actionable issues run out, generate more work by auditing — a self-sustaining loop, capped so it cannot churn forever.
 
-1. **Escalation guard** (only if `memory_path` is set and an audit-history file exists there): read the per-audit finding counts. If the last **5 consecutive** audits show strictly increasing counts (e.g. 5 → 7 → 8 → 10 → 12), STOP and report: *"Audit finding count is trending up (X → … → Z over 5 audits). Stopping autopilot — human review recommended."* Fewer than 5 entries → skip the check (not enough data).
-2. **Run `/flow:audit`** in autopilot mode, overriding two behaviors: (a) **skip the user-selection gate** — file every actionable finding automatically; (b) **cross-reference** open issues and the audit history so you never file a duplicate. Everything else follows `/flow:audit` as-is. Record the finding count to the audit-history memory file (if `memory_path` set).
+1. **Cap:** after 3 audit cycles this run, STOP and report: *"3 audit cycles done. Stopping autopilot — human review recommended."*
+2. **Run `/flow:audit`** in autopilot mode, overriding two behaviors: (a) **skip the user-selection gate** — file every actionable finding automatically; (b) **cross-reference** open issues so you never file a duplicate. Everything else follows `/flow:audit` as-is.
 3. **Evaluate:**
    - 0 new actionable issues → STOP: *"Audit found no new issues. Codebase is clean. Autopilot complete."*
    - All new issues need external dependencies → STOP with a final summary.
@@ -115,7 +116,7 @@ When actionable issues run out, generate more work by auditing — a self-sustai
 
 - Audit finds 0 new actionable issues (clean).
 - All remaining issues need external dependencies (sprint loop AND audit loop exhausted).
-- Escalation guard tripped (5 consecutive rising audit counts).
+- 3 audit cycles done.
 - The user manually stops.
 
 ## Sprint report format
@@ -134,19 +135,18 @@ Status:           Continuing to sprint {n+1}... / All issues done / Running audi
 After an audit cycle:
 
 ```
-## Audit cycle {n}
-Audit trend:    {prev counts} → {current} (healthy/warning)
+## Audit cycle {n} of 3
 New tickets:    #{first}–#{last} ({count})
 Actionable:     {count} now
 Blocked:        {count} need external deps
-Status:         Continuing to sprint... / Codebase clean — autopilot complete / Escalation guard — stopping
+Status:         Continuing to sprint... / Codebase clean — autopilot complete / Audit cap reached — stopping
 ```
 
 ## Rules
 
 - **Orchestrator never writes feature code** — it coordinates agents and does only small integration glue (registries, imports, migration order, lint).
 - **Strict file ownership** — no two implementers touch the same file in a sprint. If you can't partition cleanly, give the shared file to a single implementer.
-- **Fresh agents per sprint** — never reuse agents across sprints. `shutdown_request` every agent as soon as it reports.
+- **Fresh agents per sprint** — never reuse agents across sprints. Shut down every agent via `SendMessage` as soon as it reports.
 - **Inject the full Known Pitfalls into every spawn.**
-- **Never** force-push, skip hooks, `git add -A` (stage by name; exclude secrets and `$CLAUDE_PROJECT_DIR/.flow/session/`), or write fake code to close a ticket.
+- **Never** force-push, skip hooks, `git add -A` (stage by name; exclude secrets and everything under `.flow/` but `config.md`), or write fake code to close a ticket.
 - All issue/PM operations go through `pm_backend` — never hardcode `gh` when the backend is linear or local.

@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const {
-    copyIfMissing, ensureDir, appendSection, parseArgs, main,
+    copyIfMissing, ensureDir, parseArgs, main,
     detectStackCommands, applyStackCommands, applyPmFields, pmPrefix,
     detectProjectName, detectLanguageRuntime, detectFramework, renderClaudeMdTemplate,
     readStackCommands, missingStackCommands, requires, venvBin, readMakeTargets,
@@ -118,9 +118,7 @@ test('main: idempotent — running twice produces same files, no overwrite', () 
         if (fs.existsSync(configDest)) {
             fs.writeFileSync(configDest, 'USER EDIT');
         }
-        // CLAUDE.md now uses appendSection: an existing file without the flow marker
-        // gets the section appended (not skipped), so it is preserved but NOT left
-        // byte-for-byte identical — that's the whole point of Task 7.
+        // An existing CLAUDE.md is never touched.
         const claudeDest = path.join(sandbox, 'CLAUDE.md');
         if (fs.existsSync(claudeDest)) {
             fs.writeFileSync(claudeDest, 'USER EDIT');
@@ -134,7 +132,7 @@ test('main: idempotent — running twice produces same files, no overwrite', () 
         }
         if (fs.existsSync(claudeDest)) {
             assert.equal(fs.readFileSync(claudeDest, 'utf8'), 'USER EDIT',
-                'an existing CLAUDE.md is left byte-for-byte alone, marker or not');
+                'an existing CLAUDE.md is left byte-for-byte alone');
         }
     } finally {
         process.argv = origArgv;
@@ -231,68 +229,20 @@ test('init creates CLAUDE.md from the template only when none exists', () => {
     const dest = path.join(target, 'CLAUDE.md');
     assert.equal(fs.existsSync(dest), true, 'an absent CLAUDE.md is worth seeding');
     const text = fs.readFileSync(dest, 'utf8');
-    assert.match(text, /<!-- flow:begin -->/);
-
-    // Second run must not duplicate it — now covered by the "already exists" path.
-    runInit(target);
-    const count = (fs.readFileSync(dest, 'utf8').match(/<!-- flow:begin -->/g) || []).length;
-    assert.equal(count, 1, 'the flow section must appear exactly once');
-});
-
-// Direct unit tests for appendSection: these pin down the exact behaviour that
-// the end-to-end init tests above only exercise indirectly.
-
-test('appendSection: creates the file (and parent dir) when absent', () => {
-    const sandbox = mkSandbox();
-    const dest = path.join(sandbox, 'nested', 'CLAUDE.md');
-    const result = appendSection(dest, 'flow', 'Some flow conventions.');
-    assert.equal(result.status, 'created');
-    const text = fs.readFileSync(dest, 'utf8');
-    assert.equal(text, '<!-- flow:begin -->\nSome flow conventions.\n<!-- flow:end -->\n');
-});
-
-test('appendSection: appends to an existing file that lacks the marker', () => {
-    const sandbox = mkSandbox();
-    const dest = path.join(sandbox, 'CLAUDE.md');
-    fs.writeFileSync(dest, '# Notes\n\nKeep this.\n');
-    const result = appendSection(dest, 'flow', 'Flow body.');
-    assert.equal(result.status, 'appended');
-    const text = fs.readFileSync(dest, 'utf8');
-    assert.match(text, /^# Notes\n\nKeep this\.\n/, 'original content stays untouched at the top');
-    assert.match(text, /<!-- flow:begin -->\nFlow body\.\n<!-- flow:end -->\n$/, 'block appended at the end');
-});
-
-test('appendSection: does not glue the block onto a file missing a trailing newline', () => {
-    const sandbox = mkSandbox();
-    const dest = path.join(sandbox, 'CLAUDE.md');
-    fs.writeFileSync(dest, '# Notes with no trailing newline');
-    appendSection(dest, 'flow', 'Flow body.');
-    const text = fs.readFileSync(dest, 'utf8');
-    assert.doesNotMatch(text, /newline<!--/, 'block must not be glued onto the last line');
-    assert.match(text, /# Notes with no trailing newline\n/);
-});
-
-test('appendSection: is a no-op ("present") when the marker already exists, leaving content untouched', () => {
-    const sandbox = mkSandbox();
-    const dest = path.join(sandbox, 'CLAUDE.md');
-    fs.writeFileSync(dest, '# Notes\n\n<!-- flow:begin -->\nOld body.\n<!-- flow:end -->\n');
-    const result = appendSection(dest, 'flow', 'New body that should NOT appear.');
-    assert.equal(result.status, 'present');
-    const text = fs.readFileSync(dest, 'utf8');
-    assert.equal(text, '# Notes\n\n<!-- flow:begin -->\nOld body.\n<!-- flow:end -->\n', 'file left byte-for-byte untouched');
-    assert.doesNotMatch(text, /New body/, 'must not overwrite with new body when marker is already present');
+    assert.match(text, /^# /, 'seeded from the template');
 });
 
 // --- Stack-command detection (Task: init auto-detects stack commands) ---
 
 test('pmPrefix: each lockfile selects its package manager', () => {
     // bun.lock is Bun 1.2+'s default (text); bun.lockb is the legacy binary one.
-    // Both are still in the wild, so both must map to bun.
+    // Both are still in the wild, so both must map to `bun run` — bare `bun test`
+    // would run Bun's own test runner, not the package.json script.
     const cases = [
         ['pnpm-lock.yaml', 'pnpm'],
         ['yarn.lock', 'yarn'],
-        ['bun.lock', 'bun'],
-        ['bun.lockb', 'bun'],
+        ['bun.lock', 'bun run'],
+        ['bun.lockb', 'bun run'],
         [null, 'npm run'],
     ];
     for (const [lockfile, expected] of cases) {
@@ -377,7 +327,7 @@ test('detectStackCommands: Python project with ruff.toml and pytest.ini', () => 
     fs.writeFileSync(path.join(sandbox, 'pytest.ini'), '[pytest]\n');
 
     const detected = detectStackCommands(sandbox);
-    assert.equal(detected.lint_cmd, 'ruff check .');
+    assert.equal(detected.lint_cmd, 'ruff check');
     assert.equal(detected.test_cmd, 'pytest');
 });
 
@@ -386,7 +336,7 @@ test('detectStackCommands: Python project with pyproject.toml [tool.ruff]/[tool.
     fs.writeFileSync(path.join(sandbox, 'pyproject.toml'), '[tool.ruff]\nline-length = 100\n\n[tool.pytest.ini_options]\n');
 
     const detected = detectStackCommands(sandbox);
-    assert.equal(detected.lint_cmd, 'ruff check .');
+    assert.equal(detected.lint_cmd, 'ruff check');
     assert.equal(detected.test_cmd, 'pytest');
 });
 
@@ -633,12 +583,10 @@ test('renderClaudeMdTemplate: fills evidenced fields and marks the rest _(not se
         '- Language: {LANGUAGE}',
         '- Framework: {FRAMEWORK}',
         '- Runtime: {RUNTIME}',
-        '{PROJECT_ROOT}/',
     ].join('\n');
 
     const out = renderClaudeMdTemplate(template, {
         projectName: 'my-app',
-        projectRoot: '/path/to/my-app',
         language: 'TypeScript',
         runtime: 'Node.js',
         framework: '',
@@ -648,7 +596,6 @@ test('renderClaudeMdTemplate: fills evidenced fields and marks the rest _(not se
     assert.match(out, /^- Language: TypeScript$/m);
     assert.match(out, /^- Framework: _\(not set\)_$/m);
     assert.match(out, /^- Runtime: Node\.js$/m);
-    assert.match(out, /^\/path\/to\/my-app\/$/m);
     assert.doesNotMatch(out, /\{[A-Z_]+\}/, 'no raw placeholder must survive');
 });
 
@@ -700,7 +647,7 @@ test('main: --project-name overrides both package.json name and directory basena
     assert.doesNotMatch(claudeText, /from-package-json/);
 });
 
-test('main: re-running init never touches an already-filled-in CLAUDE.md (marker already present)', () => {
+test('main: re-running init never touches an already-seeded CLAUDE.md', () => {
     const target = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-init-'));
     runInit(target);
 
@@ -748,7 +695,7 @@ test('detectStackCommands: requirements.txt alone evidences lint/test/typecheck/
     fs.writeFileSync(path.join(sandbox, 'requirements.txt'), 'pytest\nruff\nmypy\nblack\n');
     const detected = detectStackCommands(sandbox);
     assert.equal(detected.test_cmd, 'pytest');
-    assert.equal(detected.lint_cmd, 'ruff check .');
+    assert.equal(detected.lint_cmd, 'ruff check');
     assert.equal(detected.typecheck_cmd, 'mypy .');
     assert.equal(detected.format_cmd, 'black .');
 });
@@ -757,7 +704,7 @@ test('detectStackCommands: a venv copy of a tool wins over the bare name', () =>
     const target = mkPythonScriptRepo({ venvTools: ['python', 'pytest', 'ruff'], requirements: 'pytest\nruff\n' });
     const detected = detectStackCommands(target);
     assert.equal(detected.test_cmd, path.join('.venv', 'bin', 'pytest'));
-    assert.equal(detected.lint_cmd, `${path.join('.venv', 'bin', 'ruff')} check .`);
+    assert.equal(detected.lint_cmd, `${path.join('.venv', 'bin', 'ruff')} check`);
 });
 
 test('detectStackCommands: manage.py is a Django dev server, run by the venv interpreter', () => {
@@ -833,8 +780,7 @@ test('main: what is still blank is addressed to the agent, never handed to the u
     const out = captureStdout(() => runInit(target));
 
     assert.match(out, /Stack commands still blank: .*dev_cmd/, 'the blanks must be named, not left for the user to find');
-    assert.match(out, /agent to finish, not the user/);
-    assert.match(out, /verify it actually\n.*runs/, 'the agent is told to verify, not just guess');
+    assert.match(out, /Agent: fill these per references\/stack-command-inference\.md/);
     assert.doesNotMatch(out, /Next: edit \.flow\/config\.md/, 'init must not hand the user an editing chore');
 });
 

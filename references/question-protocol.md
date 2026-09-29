@@ -48,9 +48,7 @@ retired-because: <one line>                      (only for retired)
   touchpoint must emit `questions.md UNPARSEABLE — queue unreliable, fix
   .flow/questions.md` instead of exiting quietly or guessing a count. Broken
   must never look like fine.
-- The file is private by default (`.flow/` is local-only in this repo's
-  convention). A project that shares `.flow/` may commit it — that's the
-  project's call, not this protocol's.
+- The file is private: only `.flow/config.md` is ever committed.
 
 ## Queue rules
 
@@ -62,7 +60,7 @@ retired-because: <one line>                      (only for retired)
   returns to the top of backlog).
 - **Promotion:** when an open question is answered or retired, promote the
   highest-priority backlog question. Priority order: architecture forks >
-  only-user-knows facts > scope > taste.
+  only-user-knows facts > scope.
 - **Taste questions are never asked.** Claude decides, records `status:
   assumed`; the user can override any time by editing the file or just
   saying so.
@@ -123,23 +121,14 @@ reproduces the invisible-briefing bug this protocol exists to avoid.
 
 ## Chores
 
-- **Pointer task:** requires `TaskCreate`/`TaskList`, which not every session has.
-  When they are missing, skip the pointer and say so once — never silently.
-  `.flow/questions.md` is the source of truth; the task is a mirror.
-- **Pointer task:** exactly one task exists for the queue, rebuilt from the
-  file — never trusted as storage. Title: `Q<n>: <asks> · +<N> open` (the
-  top open question's `asks`, plus the count of remaining open questions).
-  Refreshed by every flow command that touches the queue; recreated at
-  session start if missing. The file is the memory; the task is the
-  display.
 - **`/flow:continue`:** recap line ("Questions: 2 open · 5 answered · 4
-  assumed"); rebuild the pointer task; retire questions whose issues closed
+  assumed"); retire questions whose issues closed
   meanwhile. If open questions exist, the recap turn ends with the top
   question's briefing + handoff line (see Presenting a question — never a
   dialog in the recap turn itself; the dialog follows the user's reply).
 - **`/flow:pause`:** update the questions line in `session-progress.md`;
   flag any `answered` block with empty `applied:` loudly; retire questions
-  whose issues it closes; refresh the pointer task.
+  whose issues it closes.
 - **`/flow:questions`:** answer a round now (up to `question_wip` dialogs,
   one at a time); list the queue; reopen an answered question; retire or
   edit entries conversationally.

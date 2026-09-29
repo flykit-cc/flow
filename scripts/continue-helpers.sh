@@ -9,6 +9,7 @@
 #   continue-helpers.sh last-log-titles     # last 3 dated titles from .flow/session-log.md
 #   continue-helpers.sh dev-server-state    # running:<pid> | port-taken:<cwd> | free | no-port
 #   continue-helpers.sh deps-ok             # ok | missing   (alias: node-modules-ok)
+#   continue-helpers.sh needs-you           # body of the "Needs you" section (empty if none)
 
 set -euo pipefail
 
@@ -63,13 +64,13 @@ case "$cmd" in
     #
     # Sweeping moves rather than deletes, which is what makes failing closed
     # cheap enough to be the default — a wrong call is undone with one `mv`.
+    # spent/ keeps only the previous sweep's files, so it never grows forever.
+    rm -rf "$SPENT_DIR"
     HAVE_MARKER=1; [ -f "$MARKER" ] || HAVE_MARKER=0
     NAMES=""
     for f in "$SESSION_DIR"/*; do
       [ -f "$f" ] || continue
       BASE=$(basename "$f")
-      # shutdown_request is a control marker, not a phase handoff.
-      if [ "$BASE" = "shutdown_request" ]; then continue; fi
       if [ "$HAVE_MARKER" -eq 0 ] || [ "$f" -ot "$MARKER" ]; then
         mkdir -p "$SPENT_DIR"
         mv -f "$f" "$SPENT_DIR/$BASE"
@@ -89,6 +90,14 @@ case "$cmd" in
     NOW=$(date +%s)
     if MTIME=$(stat -f %m "$PROGRESS" 2>/dev/null); then :; else MTIME=$(stat -c %Y "$PROGRESS" 2>/dev/null || echo "$NOW"); fi
     echo $(( (NOW - MTIME) / 86400 ))
+    ;;
+
+  needs-you)
+    # What an unattended pause had to tell a user who was not there. The pause's
+    # chat report never reaches the next session; this section does.
+    [ -f "$PROGRESS" ] || exit 0
+    # Entries are `- ` bullets; stray prose (a Verification: line) is not one.
+    awk 'tolower($0) ~ /^#+ *needs you/{flag=1; next} /^#+ /{flag=0} flag && /^[[:space:]]*- /{print}' "$PROGRESS"
     ;;
 
   last-log-titles)

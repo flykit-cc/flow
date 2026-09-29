@@ -8,13 +8,27 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 const HOOK = path.join(__dirname, 'secret-guard.sh');
+// A project with no config.md, so the default secret_globs apply — not the
+// config of whatever project the tests happen to run inside.
+// It holds real secret-named files: for grep/rg/sed/awk a secret-looking word
+// only counts when the file exists, so the block cases need them on disk.
+const PROJECT = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-sg-'));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-sg-home-'));
+for (const f of ['.env', '.env.local', 'credentials.json', 'config/secrets.yml', 'config/.env', 'x.pem']) {
+    fs.mkdirSync(path.dirname(path.join(PROJECT, f)), { recursive: true });
+    fs.writeFileSync(path.join(PROJECT, f), 'API_KEY=sk-test\n');
+}
+fs.mkdirSync(path.join(HOME, '.ssh'));
+fs.writeFileSync(path.join(HOME, '.ssh', 'id_rsa'), 'key\n');
+const ENV = { ...process.env, CLAUDE_PROJECT_DIR: PROJECT, HOME };
 
 function runHook(input) {
     try {
         const stdout = execFileSync('bash', [HOOK], {
             encoding: 'utf8',
-            input: JSON.stringify(input),
+            input: JSON.stringify({ cwd: PROJECT, ...input }),
             stdio: 'pipe',
+            env: ENV,
         });
         return { code: 0, stdout };
     } catch (err) {
@@ -40,6 +54,9 @@ const MUST_ALLOW = [
     'rg "api_key" --files-with-matches',
     'cat src/keyboard.ts',
     'cat src/config.ts',
+    'grep -rn "process.env" src/',
+    'sed -n 1,20p config/app.env.ts',
+    'cat src/secrets/index.ts',
 ];
 
 for (const cmd of MUST_ALLOW) {
@@ -55,6 +72,23 @@ const MUST_BLOCK = [
     'cat ~/.ssh/id_rsa',
     'grep -r . credentials.json',
     'cat config/secrets.yml',
+    'grep -rn "process.env" .env',
+    'grep -e FOO .env.local',
+    'sed -n 1p x.pem',
+    // The pattern arrives through an option, so the secret is a plain operand.
+    'grep -r -f .env .',
+    'grep -f .env x',
+    'grep --file=.env x',
+    'grep -f.env x',
+    'rg -uu -f .env',
+    'grep --regexp=A .env',
+    'grep -eKEY .env',
+    'grep -iea .env',
+    'sed -nep .env',
+    'sed --expression=p .env',
+    'awk --source={print} .env',
+    'awk -f .env x',
+    'cd config && grep KEY .env',
 ];
 
 for (const cmd of MUST_BLOCK) {
@@ -73,6 +107,23 @@ test('Read: secret file path is blocked', () => {
 test('Read: ordinary file path is allowed', () => {
     const { code } = readFile('/repo/src/config.ts');
     assert.equal(code, 0);
+});
+
+test('Read: a "secret" directory or file-name fragment is not a secret file', () => {
+    assert.equal(readFile('/repo/src/secrets/index.ts').code, 0);
+    assert.equal(readFile('/repo/src/secretStore.ts').code, 0);
+});
+
+test('Read: .env.example-style placeholders are not secrets', () => {
+    for (const p of ['/repo/.env.example', '/repo/.env.sample', '/repo/.env.template']) {
+        assert.equal(readFile(p).code, 0, p);
+    }
+});
+
+test('Read: env files and keys are blocked', () => {
+    for (const p of ['/repo/.env.local', '/repo/id_rsa', '/repo/x.pem']) {
+        assert.equal(readFile(p).code, 2, p);
+    }
 });
 
 test('Bash: command with no secret-looking tokens at all is allowed', () => {
@@ -109,17 +160,15 @@ test('secret globs are matched literally, not expanded against the cwd', () => {
     // EXPANSION to the pattern list. Run from a directory containing a file that
     // matches one of the globs and that glob is REPLACED by the concrete
     // filenames, silently dropping the pattern — the guard then lets real
-    // secrets through. Reproduced live: `cat config/secrets.yml` was blocked
-    // from every directory except the plugin's own hooks/ dir, which contains
-    // files matching *secret*.
+    // secrets through.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-globexp-'));
-    fs.writeFileSync(path.join(dir, ['my', 'sec', 'rets.txt'].join('')), 'x');
+    fs.writeFileSync(path.join(dir, 'other.pem'), 'x');
 
     let code = 0;
     try {
         execFileSync('bash', [HOOK], {
-            encoding: 'utf8', cwd: dir, stdio: 'pipe',
-            input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cat config/secrets.yml' } }),
+            encoding: 'utf8', cwd: dir, stdio: 'pipe', env: ENV,
+            input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cat config/server.pem' } }),
         });
     } catch (err) { code = err.status; }
 

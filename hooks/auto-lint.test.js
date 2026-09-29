@@ -132,3 +132,19 @@ test('blank lint_cmd does nothing and exits 0', () => {
 
     assert.doesNotThrow(() => runHook(root, target));
 });
+
+test('lint_cmd/format_cmd: a trailing " ." is dropped so only the edited file is checked', () => {
+    const root = makeRepo('');
+    const binDir = fakeCmdOnPath(root, 'ruff');
+    fs.writeFileSync(path.join(binDir, 'black'),
+        '#!/usr/bin/env bash\n' + `echo "$@" > "${path.join(root, 'black.ran')}"\n`);
+    fs.chmodSync(path.join(binDir, 'black'), 0o755);
+    fs.writeFileSync(path.join(root, '.flow', 'config.md'), '- lint_cmd: ruff check .\n- format_cmd: black .\n');
+    const target = path.join(root, 'f.py');
+    fs.writeFileSync(target, 'x = 1\n');
+
+    runHook(root, target, binDir);
+
+    assert.equal(fs.readFileSync(path.join(root, 'ruff.ran'), 'utf8').trim(), `check --fix ${target}`);
+    assert.equal(fs.readFileSync(path.join(root, 'black.ran'), 'utf8').trim(), target);
+});

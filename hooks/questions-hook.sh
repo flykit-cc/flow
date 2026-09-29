@@ -10,10 +10,9 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 [ -d "$PROJECT_DIR/.flow" ] || exit 0
 HELPERS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)/questions-helpers.sh"
 Q="$PROJECT_DIR/.flow/questions.md"
-CFG="$PROJECT_DIR/.flow/config.md"
 
 STATE="$(bash "$HELPERS" state-line "$Q" 2>/dev/null || true)"
-WIP="$(bash "$HELPERS" wip-limit "$CFG" 2>/dev/null || echo 3)"
+WIP="$(bash "$HELPERS" wip-limit 2>/dev/null || echo 3)"
 
 case "$MODE" in
     session-start)
@@ -25,12 +24,19 @@ Full protocol: flow plugin references/question-protocol.md
 EOF
         ;;
     prompt)
-        if [ -f "$Q" ] && [ -n "$STATE" ]; then
-            case "$STATE" in
-                *UNPARSEABLE*) echo "$STATE" ;;
-                *) echo "$STATE — new questions are filed in .flow/questions.md first" ;;
-            esac
-        fi
+        # Only when there is something to act on — not an all-zero line on
+        # every prompt.
+        case "$STATE" in
+            ''|'questions: 0 open · 0 backlog') ;;
+            *UNPARSEABLE*) echo "$STATE" ;;
+            *) echo "$STATE — new questions are filed in .flow/questions.md first" ;;
+        esac
         ;;
 esac
+
+# A `/flow:pause after` can outlive a compaction (SessionStart "compact"). The
+# marker is what tells the model it is still mid-pause.
+if [ "$MODE" = "session-start" ] && [ -f "$PROJECT_DIR/.flow/state/pause-pending" ]; then
+    echo "[flow] /flow:pause pending ($(head -1 "$PROJECT_DIR/.flow/state/pause-pending")). If this session started it, carry on at its Step 2a; otherwise /flow:continue will offer to re-run it."
+fi
 exit 0

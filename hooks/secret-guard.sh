@@ -18,8 +18,8 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SOURCE_DIR/.." && pwd)"
 
 # The plugin's own source ships publicly on GitHub and holds no credentials,
-# but several of its filenames contain "secret", so the *secret* glob blocks
-# reading them. Blocking a security tool's own source is pure friction, and
+# but several of its filenames contain "secret", so a *secret* glob (older
+# configs still carry one) blocks reading them. Blocking a security tool's own source is pure friction, and
 # friction on a guard teaches people to route around it — a worse outcome than
 # the non-risk it prevents. Reads only; file-protection.sh still covers writes.
 flow_is_plugin_path() {
@@ -64,8 +64,16 @@ case "$TOOL" in
         # segments, and for each segment whose leading command is a known
         # reader, test its non-flag, path-shaped arguments with the same
         # anchored `flow_path_is_secret` the Read branch above already uses.
+        # grep/rg/sed/awk also take patterns and scripts, which can look like
+        # secret names (`grep -rn "process.env" src/`). Guessing which word is
+        # the pattern from their many option forms leaked real files, so for
+        # them a secret-looking word only counts if that file exists — a
+        # pattern that names no file reads nothing. `cd` in the same command
+        # moves where that check looks.
         READER_RE='^(cat|head|tail|less|more|grep|egrep|rg|od|xxd|strings|nl|awk|sed|dotenv|base64)$'
         BLOCKED=""
+        CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+        [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
         # Best-effort, defense-in-depth only: split on shell list/pipe
         # separators. This is lexical, not a real shell parser — it never
         # evals the command, so command substitutions in it are never
@@ -76,11 +84,21 @@ case "$TOOL" in
             read -ra WORDS <<< "$SEGMENT" || continue
             [ "${#WORDS[@]}" -gt 0 ] || continue
             CMDNAME="${WORDS[0]##*/}"
+            if [ "$CMDNAME" = "cd" ] && [ -n "${WORDS[1]:-}" ]; then
+                case "${WORDS[1]}" in /*) CWD="${WORDS[1]}" ;; *) CWD="$CWD/${WORDS[1]}" ;; esac
+                continue
+            fi
             printf '%s' "$CMDNAME" | grep -Eq "$READER_RE" || continue
+            PATTERNED=""
+            case "$CMDNAME" in grep|egrep|rg|sed|awk) PATTERNED=1 ;; esac
             for ((i = 1; i < ${#WORDS[@]}; i++)); do
                 TOK="${WORDS[$i]}"
+                # An option may carry a file: --file=.env, -f.env.
                 case "$TOK" in
-                    -*) continue ;;  # option flag, not a path argument
+                    --*=*) TOK="${TOK#*=}" ;;
+                    -?) continue ;;
+                    --*) continue ;;
+                    -*) TOK="${TOK#-?}" ;;
                 esac
                 # Strip one layer of matching surrounding quotes left over
                 # from the naive word-split.
@@ -93,7 +111,8 @@ case "$TOOL" in
                 case "$TOK" in
                     */*|*.*)
                         if flow_path_is_secret "$TOK" && ! flow_is_plugin_path "$TOK"; then
-                            BLOCKED="$TOK"
+                            case "$TOK" in "~/"*) FILE="$HOME/${TOK#\~/}" ;; /*) FILE="$TOK" ;; *) FILE="$CWD/$TOK" ;; esac
+                            if [ -z "$PATTERNED" ] || [ -e "$FILE" ]; then BLOCKED="$TOK"; fi
                         fi
                         ;;
                 esac

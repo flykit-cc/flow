@@ -1,6 +1,6 @@
 ---
 description: Bootstrap a new project with .flow/config.md and CLAUDE.md tailored to your stack.
-allowed-tools: Bash, Read, Edit, Glob, Grep, AskUserQuestion
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 # /flow:init
 
@@ -49,28 +49,8 @@ first, then `/flow:init` again.
 
 ## Step 3: Fill in what detection missed
 
-The script ends by naming every key it could not fill:
-
-```
-[flow init] Done. Stack commands still blank: dev_cmd, build_cmd, format_cmd
-```
-
-That list is **yours to finish, not the user's**. A repo with a venv, a `tests/test_*.py` and
-an `app.py` has a test command and a dev command; they are simply not declared in a manifest.
-Telling the user to "edit `.flow/config.md` to fill in your project commands" hands back a
-chore you can complete in one pass.
-
-For each blank key, follow `${CLAUDE_PLUGIN_ROOT}/references/stack-command-inference.md`:
-find the evidence (entrypoints, test files, linter configs, `.github/workflows/`), prefer the
-project's own environment (`.venv/bin/pytest`, not a bare `pytest`), **run the command to
-verify it works**, then write it into the matching `- <key>:` line with `Edit`. Leave a key
-blank only when the project genuinely has nothing to run for it, and say which and why.
-
-Nothing here is overwritten by the script, so this step works the same on a re-run against an
-already-initialised project whose commands were left blank.
-
-Ask the user only when the evidence genuinely conflicts — two test runners and nothing in the
-repo picking between them. Never ask for a command you could have found and verified.
+The script ends by naming every `*_cmd` it could not fill. Those are yours, not the user's:
+fill them per `${CLAUDE_PLUGIN_ROOT}/references/stack-command-inference.md`.
 
 ## Step 4: Backend bootstrapping
 
@@ -78,12 +58,8 @@ repo picking between them. Never ask for a command you could have found and veri
   `README.md` explaining the format (one markdown file per issue, frontmatter with
   `status`, `priority`, `created`), if they don't already exist.
 - `pm_backend=github`: run `gh auth status` and warn if the user is not logged in.
-- `pm_backend=linear`: tell the user to install/configure the Linear MCP server in their
-  `.claude/settings.json`.
-
-`.flow/config.md` is **shareable project truth** and is staged normally — commit it if
-collaborators should get the same stack setup. Only `.flow/local.md` is machine-private
-(`private_globs` covers it), so machine-specific values belong there, not in `config.md`.
+- `pm_backend=linear`: check that a Linear MCP server is available (`claude mcp list`, or
+  Linear MCP tools in this session); if not, tell the user to add one with `claude mcp add`.
 
 ## Step 5: Report
 
@@ -94,8 +70,8 @@ how you verified it, and any key you deliberately left blank.
 ## Step 6: Verify the setup
 
 Run `/flow:health` straight away rather than suggesting it. Init is exactly the point where
-a wrong answer is cheapest to fix, and health only diagnoses — the one thing it repairs is a
-blank `*_cmd`, which Step 3 should already have left nothing to do.
+a wrong answer is cheapest to fix. Step 3 already settled every `*_cmd` — do not re-infer
+them here; a key Step 3 left blank on purpose is `OK`.
 
 Report only what health flags. If everything passes, one line is enough — do not reprint the
 whole table on top of the Step 5 report.

@@ -1,6 +1,6 @@
 ---
 description: Answer, inspect, or edit the open-question queue (.flow/questions.md)
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion, TaskCreate, TaskUpdate, TaskList
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 # /flow:questions
 
@@ -30,14 +30,13 @@ Otherwise branch on the invocation below.
 
 ## Default (no args): answer a round
 
-Up to `"$HELPERS" wip-limit "$CLAUDE_PROJECT_DIR/.flow/config.md"` questions, oldest first, **one fully settled before the next briefing starts**:
+Up to `"$HELPERS" wip-limit` questions, oldest first, **one fully settled before the next briefing starts**:
 
 1. `"$HELPERS" top-open "$FILE"` — the oldest still-open block (re-run this each time; promotion in step 5 can change what's next).
 2. Follow `## Presenting a question` in `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md`: a briefing turn built from that block's `asks` / `context` / `options` / `recommendation`, ending on the handoff line ("Ready to pick? Reply anything and I'll open the options.") with no tool call after it — that's what makes it render. Never put the briefing and the dialog in the same message; that's the one failure mode this protocol exists to prevent.
 3. Next turn, after the user replies: open the `AskUserQuestion` dialog, carrying the `Q<n>` id — unless the reply already answered or redirected the question, in which case skip the dialog entirely.
 4. Write `answer:` on the block immediately (Write/Edit), set `status: answered`.
 5. Promote the top backlog question into the freed slot, per `## Queue rules` in the same reference.
-6. Rebuild the pointer task now (see below) — after every question this round, not just at the end.
 
 Stop the round when the WIP-limit count of dialogs is used up, no open questions remain, or the user wants to stop.
 
@@ -59,19 +58,3 @@ Edit that block: `status: open`. If open questions would then exceed `"$HELPERS"
 ## `retire Q<n> <reason>`
 
 Edit that block: `status: retired`, `retired-because: <reason>`. If the block was `status: open`, promote the top backlog question into the freed slot, per `## Queue rules` in `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md` — same as the answer flow.
-
-## End of every invocation: rebuild the pointer task
-
-**If `TaskCreate`/`TaskList` are not available in this session, skip this section entirely and say so once** — e.g. "no pointer task: task tools unavailable here." The queue file is the source of truth and stays correct without it; the pointer is a convenience mirror. Do not fake it with a message that looks like a task, and do not fail the command. What must never happen is silence: a user who relies on the pointer to remember open questions would otherwise assume there are none.
-
-
-```bash
-"$HELPERS" counts "$FILE"
-"$HELPERS" top-open "$FILE"
-```
-
-`TaskList` to find the existing pointer task — subject starts with `Q` and contains `· +`. Compute the target subject from the current top open question and open count, per spec: `Q<n>: <asks> · +<open-count minus 1> open` (e.g. `Q7: cache per-user or global? · +2 open`).
-
-- Found: `TaskUpdate` its subject to match.
-- Missing, and at least one question is open: `TaskCreate` it.
-- Zero open questions remain: mark the pointer task completed instead.

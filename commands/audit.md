@@ -20,7 +20,7 @@ Spawn the built-in `Explore` agent (breadth: "very thorough"). Brief it to scan 
 - Dead code (unreferenced exports, unreachable branches, unused dependencies)
 - Drift from documented patterns (violations of the project's known pitfalls list)
 
-Output goes to `$CLAUDE_PROJECT_DIR/.flow/session/audit.md`, one finding per entry, each with: `title`, `severity` (High/Medium/Low), `path:line`, `evidence`, `suggested fix`.
+Explore is read-only: it returns its report, one finding per entry, each with `title`, `severity` (High/Medium/Low), `path:line`, `evidence`, `suggested fix`. Write that report to `$CLAUDE_PROJECT_DIR/.flow/session/audit.md` yourself.
 
 ## Step 3: Dedup against existing issues
 
@@ -32,9 +32,9 @@ Show the user a table grouped by severity. Use `AskUserQuestion` to let them sel
 
 ## Step 5: File issues
 
-For each selected finding, write a clean issue body yourself — title (imperative, under ~70 chars), context, evidence (`path:line`), suggested fix, acceptance criteria — then create it on the configured `pm_backend`. Search first and skip if a similar open issue already exists.
+For each selected finding, write a clean issue body yourself — title (imperative, under ~70 chars), context, evidence (`path:line`), suggested fix, acceptance criteria — then create it on the configured `pm_backend`.
 
-- **github**: `gh issue create --title ... --body ... --label audit`
+- **github**: `gh issue create --title "<title>" --body-file - <<'EOF'` … `EOF` — the quoted heredoc keeps backticks and `$` in the body literal
 - **linear**: use Linear MCP create-issue
 - **local**: write a new file in `$CLAUDE_PROJECT_DIR/issues/`
 

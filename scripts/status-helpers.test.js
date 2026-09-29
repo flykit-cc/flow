@@ -13,11 +13,11 @@ function git(root, args) {
     return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: 'pipe' });
 }
 
-function run(root, sub) {
+function run(root, sub, env = {}) {
     return execFileSync('bash', [HELPERS, sub], {
         encoding: 'utf8',
         cwd: root,
-        env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+        env: { ...process.env, CLAUDE_PROJECT_DIR: root, ...env },
         stdio: 'pipe',
     });
 }
@@ -128,6 +128,28 @@ test('progress extracts goal, paused-at, verification, and open tasks', () => {
     const tasks = [].concat(s.task);
     assert.strictEqual(tasks.length, 2);
     assert.ok(tasks.every((t) => !t.includes('done thing')), 'checked items are not open tasks');
+});
+
+test('progress reads Paused at from its heading section', () => {
+    const root = makeRepo();
+    writeProgress(root, '## Goal\n\nX.\n\n## Paused at\n\n2026-09-29, mid-refactor.\n\n## Next steps\n- y\n');
+    assert.strictEqual(parse(run(root, 'progress')).paused_at, '2026-09-29, mid-refactor.');
+});
+
+test('pr-state: skipped/neutral checks pass, cancelled/timed-out fail', () => {
+    const root = makeRepo();
+    const checks = (conclusions) => {
+        const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-status-gh-'));
+        const json = JSON.stringify({ number: 7, title: 't', state: 'OPEN',
+            statusCheckRollup: conclusions.map((c) => ({ conclusion: c })) });
+        fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env bash\necho '${json}'\n`);
+        fs.chmodSync(path.join(bin, 'gh'), 0o755);
+        return parse(run(root, 'pr-state', { PATH: `${bin}:${process.env.PATH}` })).pr_checks;
+    };
+    assert.strictEqual(checks(['SUCCESS', 'SKIPPED', 'NEUTRAL']), 'passing');
+    assert.strictEqual(checks(['SUCCESS', 'CANCELLED']), 'failing');
+    assert.strictEqual(checks(['SUCCESS', 'TIMED_OUT']), 'failing');
+    assert.strictEqual(checks(['SUCCESS', '']), 'pending');
 });
 
 test('progress caps the task list at five entries', () => {
