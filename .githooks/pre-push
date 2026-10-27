@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Refuse a push to main that ships plugin changes without a version bump.
+# /plugin compares version numbers, not commits: no bump = nobody gets the change.
+# Enable once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+MARKET="$(git rev-parse --show-toplevel)/../flykit-plugins/.claude-plugin/marketplace.json"
+ver() { node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(process.argv[1]?j.plugins.find(p=>p.name==="flow").version:j.version)' ${2:-} <<<"$1"; }
+zero=0000000000000000000000000000000000000000
+
+while read -r _ local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = refs/heads/main ] || continue
+  [ "$local_sha" != "$zero" ] && [ "$remote_sha" != "$zero" ] || continue
+
+  new=$(ver "$(git show "$local_sha:.claude-plugin/plugin.json")")
+  pkg=$(ver "$(git show "$local_sha:package.json")")
+  if [ "$new" != "$pkg" ]; then
+    echo "pre-push: plugin.json is $new but package.json is $pkg. Make them match." >&2; exit 1
+  fi
+  if [ -f "$MARKET" ] && [ "$(ver "$(cat "$MARKET")" market)" != "$new" ]; then
+    echo "pre-push: flykit-plugins marketplace.json flow version is not $new. Bump it too." >&2; exit 1
+  fi
+
+  git diff --quiet "$remote_sha" "$local_sha" -- commands hooks scripts references agents && continue
+  old=$(ver "$(git show "$remote_sha:.claude-plugin/plugin.json")")
+  if [ "$new" = "$old" ]; then
+    cat >&2 <<EOF
+pre-push: plugin files changed but the version is still $old.
+/plugin will say "already latest" and nobody gets the change.
+Bump the flow version in all 3 files, then push again:
+  .claude-plugin/plugin.json
+  package.json
+  ../flykit-plugins/.claude-plugin/marketplace.json  (push that repo after this one)
+EOF
+    exit 1
+  fi
+done
+exit 0
