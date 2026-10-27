@@ -33,7 +33,7 @@ Otherwise branch on the invocation below.
 Up to `"$HELPERS" wip-limit` questions, oldest first, **one fully settled before the next briefing starts**:
 
 1. `"$HELPERS" top-open "$FILE"` — the oldest still-open block (re-run this each time; promotion in step 5 can change what's next).
-2. Follow `## Presenting a question` in `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md`: a briefing turn built from that block's `asks` / `context` / `options` / `recommendation`, ending on the handoff line ("Ready to pick? Reply anything and I'll open the options.") with no tool call after it — that's what makes it render. Never put the briefing and the dialog in the same message; that's the one failure mode this protocol exists to prevent.
+2. Follow `## Presenting a question` in `${CLAUDE_PLUGIN_ROOT}/references/question-protocol.md`: one dialog built from that block's `asks` / `context` / `options` / `recommendation`, the full briefing in the recommended option's `preview`. No text the user must read goes before the dialog — text before a tool call may never render.
 3. Next turn, after the user replies: open the `AskUserQuestion` dialog, carrying the `Q<n>` id — unless the reply already answered or redirected the question, in which case skip the dialog entirely.
 4. Write `answer:` on the block immediately (Write/Edit), set `status: answered`.
 5. Promote the top backlog question into the freed slot, per `## Queue rules` in the same reference.

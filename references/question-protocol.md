@@ -81,30 +81,26 @@ never render in the Claude Code UI. A dialog preceded by "briefing" text in
 one message can arrive naked — the briefing exists only in the session log,
 never on screen. Design around this, never against it.
 
-**Default — two turns, never one:**
+**One dialog, nothing to read before it.** The dialog carries the whole
+briefing, so the user reads and answers in one place, in one turn:
 
-1. **Turn ends with the briefing as final text** (no tool call after it —
-   that's what guarantees it renders). Single topic: this question only.
-   Full formatting freedom — headers, tables, examples, whatever makes it
-   clearest. As simple as it can be, no jargon. Always closes with the
-   handoff line: "Ready to pick? Reply anything and I'll open the options."
-2. **Next turn, after the user replies:** open the dialog. It self-recaps,
-   as insurance against the briefing having been skimmed or missed:
-   - `question` field: the decision restated in 1–2 plain sentences.
-   - Each option's `description`: that option's concrete consequence.
-   - `preview`: comparison detail when useful.
-   - Recommended option listed first, suffixed "(Recommended)".
-   - The dialog carries its `Q<n>` id so the file can be cross-checked.
-   - **Unless the reply already answers or redirects the question** — then
-     skip the dialog entirely: write `answer:` immediately (per File
-     format's write-timing rule) and move on. Never re-ask what the
-     briefing reply already settled.
+- `question` field: the decision in 1–2 plain sentences, with its `Q<n>` id
+  so the file can be cross-checked.
+- Each option's `description`: that option's concrete consequence.
+- `preview` on the recommended option: the full briefing — why it matters,
+  tables, examples, wording to approve — as long as it needs to be clear.
+  Single topic, no jargon. Other options' `preview`: what differs for them.
+- Recommended option listed first, suffixed "(Recommended)".
 
-**Exception — trivial questions** (obvious default, plain yes/no): skip the
-briefing turn, go straight to a self-explanatory dialog.
+No briefing turn and no "reply anything" handoff line. Text in the same
+message before the dialog is allowed only if losing it costs nothing.
 
-**Never** put the briefing text and the dialog in the same message — that
-reproduces the invisible-briefing bug this protocol exists to avoid.
+**Nothing is lost when the dialog closes:** the block in `questions.md`
+already holds the briefing (`context:`, `options:`, `recommendation:`), and
+the reply after the answer opens with one line naming what was picked.
+
+If the user dismisses the dialog or answers in free text, record that
+answer per the write-timing rule; never re-open the same dialog unasked.
 
 ## Subagents
 
@@ -124,8 +120,8 @@ reproduces the invisible-briefing bug this protocol exists to avoid.
 - **`/flow:continue`:** recap line ("Questions: 2 open · 5 answered · 4
   assumed"); retire questions whose issues closed
   meanwhile. If open questions exist, the recap turn ends with the top
-  question's briefing + handoff line (see Presenting a question — never a
-  dialog in the recap turn itself; the dialog follows the user's reply).
+  question's dialog, with the recap in its `preview` (see Presenting a
+  question — no text before the dialog).
 - **`/flow:pause`:** update the questions line in `session-progress.md`;
   flag any `answered` block with empty `applied:` loudly; retire questions
   whose issues it closes.

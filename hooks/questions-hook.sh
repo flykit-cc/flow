@@ -19,7 +19,7 @@ case "$MODE" in
         echo "[flow question queue]"
         [ -n "$STATE" ] && echo "$STATE"
         cat <<EOF
-Rules: (1) A question for the user is ASKED by first writing a Q-block to .flow/questions.md — status backlog, or open only if fewer than ${WIP} are open or the answer invalidates in-flight work. (2) Present ONE question at a time, two turns: briefing as final text ending the turn (single topic, plain words, any formatting) closing with a handoff line; the AskUserQuestion dialog opens next turn and restates the decision — NEVER briefing text and a dialog in the same message. (3) Record the user's answer in the file the same turn it is given; set applied: when the change lands ('-' if none needed). (4) Never re-ask an answered question. (5) Subagents never ask the user — their reports carry a "Questions raised" section; file those on receipt.
+Rules: (1) A question for the user is ASKED by first writing a Q-block to .flow/questions.md — status backlog, or open only if fewer than ${WIP} are open or the answer invalidates in-flight work. (2) Present ONE question at a time as ONE AskUserQuestion dialog with nothing to read before it: question = the decision in 1-2 sentences, each option description = its consequence, preview on the recommended option = the full briefing. No briefing turn, no 'reply anything' handoff. (3) Record the user's answer in the file the same turn it is given; set applied: when the change lands ('-' if none needed). (4) Never re-ask an answered question. (5) Subagents never ask the user — their reports carry a "Questions raised" section; file those on receipt.
 Full protocol: flow plugin references/question-protocol.md
 EOF
         ;;
