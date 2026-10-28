@@ -84,12 +84,14 @@ never on screen. Design around this, never against it.
 **One dialog, nothing to read before it.** The dialog carries the whole
 briefing, so the user reads and answers in one place, in one turn:
 
-- `question` field: the decision in 1–2 plain sentences, with its `Q<n>` id
-  so the file can be cross-checked.
+- `question` field: the context and the decision in 1–3 plain sentences,
+  with its `Q<n>` id so the file can be cross-checked.
 - Each option's `description`: that option's concrete consequence.
-- `preview` on the recommended option: the full briefing — why it matters,
-  tables, examples, wording to approve — as long as it needs to be clear.
-  Single topic, no jargon. Other options' `preview`: what differs for them.
+- Default: no `preview`. That gives the list style, a paragraph under each
+  option. Use `preview` only when the decision needs a long briefing, a
+  comparison table or a mockup; any `preview` switches the dialog to a
+  side-by-side box. Then the recommended option's `preview` holds the full
+  briefing, single topic, no jargon; other options' `preview`: what differs.
 - Recommended option listed first, suffixed "(Recommended)".
 
 No briefing turn and no "reply anything" handoff line. Text in the same
@@ -120,8 +122,9 @@ answer per the write-timing rule; never re-open the same dialog unasked.
 - **`/flow:continue`:** recap line ("Questions: 2 open · 5 answered · 4
   assumed"); retire questions whose issues closed
   meanwhile. If open questions exist, the recap turn ends with the top
-  question's dialog, with the recap in its `preview` (see Presenting a
-  question — no text before the dialog).
+  question's dialog, with the recap in its `question` field — or in the
+  recommended option's `preview` only when the recap is long (see
+  Presenting a question — no text before the dialog).
 - **`/flow:pause`:** update the questions line in `session-progress.md`;
   flag any `answered` block with empty `applied:` loudly; retire questions
   whose issues it closes.
